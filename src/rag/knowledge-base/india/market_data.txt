@@ -1,0 +1,81 @@
+# India Real Estate - Market Data
+
+## Market Price Indices
+
+### NHB RESIDEX
+- Official Housing Price Index of India
+- Quarterly updates
+- City-wise indices
+- Base year: 2007
+- Methodology: Laspeyres index
+
+### Market Data Sources
+
+**NHB RESIDEX Portal:**
+- Provides: City-wise price indices
+- Updates: Quarterly
+- Coverage: Major cities across India
+
+**Property Portals:**
+- 99acres, MagicBricks, Housing.com
+- Provides: Listing prices, sold prices
+- Coverage: Pan-India
+
+**Government Data:**
+- RERA project data
+- Land registration records
+- Property tax records
+
+## Data Schema
+
+### Core Tables
+
+**property**
+- property_id, address, city, state, pincode
+- lat, lon, carpet_area
+- beds, baths, amenities
+
+**listing**
+- listing_id, property_id, source
+- price, status, description_text
+
+**transaction**
+- transaction_id, property_id
+- event_date, registered_value
+
+**market_index**
+- city, quarter
+- nhb_residex_value
+
+**document**
+- doc_id, property_id
+- doc_type, raw_text
+
+**document_chunk**
+- chunk_id, doc_id
+- chunk_text, embedding_id
+
+## Market Analysis
+
+### Price Trends
+- City-wise price per sqft
+- Quarterly price changes
+- Annual appreciation rates
+- Market cycles
+
+### Market Conditions
+- Inventory levels
+- Absorption rates
+- Price-to-list ratios
+- Market velocity
+
+### Regional Variations
+- Tier-1 cities: Mumbai, Delhi, Bangalore, Chennai
+- Tier-2 cities: Pune, Hyderabad, Kolkata
+- Tier-3 cities: Smaller metros
+
+### Property Types
+- Apartments/Flats
+- Independent houses/Villas
+- Plots/Land
+- Commercial properties

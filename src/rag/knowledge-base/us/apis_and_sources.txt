@@ -1,0 +1,66 @@
+# US Real Estate - APIs & Data Sources
+
+## 1. Core US Data Sources
+
+### 1.1 US Census & Demographics (Open)
+
+**Census Data API (Demographics, Income, Housing)**
+- API Hub: https://api.census.gov/data.html
+- Example ACS API Call:
+  https://api.census.gov/data/2023/acs/acs5?get=NAME,B19013_001E&for=tract:*&in=state:06
+
+**Census Geocoder (Address → Lat/Lon + Census Tracts)**
+- URL: https://geocoding.geo.census.gov/geocoder/
+
+**TIGER/Line Shapefiles (Boundaries)**
+- URL: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+
+### 1.2 State, City & County Open Data Portals (Open APIs)
+
+Many US counties and cities publish assessor, parcel, sales, and permit data using Socrata (SODA) APIs.
+
+**Socrata API Documentation:**
+- URL: https://dev.socrata.com/
+
+**Example: Cook County (IL) Property Sales Dataset**
+- URL: https://datacatalog.cookcountyil.gov/resource/wvhk-k5uv.json?$limit=100
+
+**Chicago Open Data Developer Portal**
+- URL: https://chicago.github.io/dev.cityofchicago.org/
+
+### 1.3 Nationwide Parcel & Property APIs (Commercial)
+
+**ATTOM Property & Assessor Data**
+- URL: https://www.attomdata.com/data/property-data/
+
+**Regrid Parcel Boundaries API**
+- URL: https://regrid.com/api
+
+**First American Data & Analytics API**
+- URL: https://dna.firstam.com/api
+
+### 1.4 Geo, Mapping & POI Data (Open)
+
+**OpenStreetMap / Nominatim Geocoding**
+- URL: https://nominatim.openstreetmap.org/
+
+**Overpass API (Schools, Transit, Amenities)**
+- URL: https://overpass-api.de/api/interpreter
+
+## 2. Data Access Methods
+
+### Socrata (SODA) API Usage
+- Many US counties use Socrata platform
+- RESTful API with JSON responses
+- Supports filtering, aggregation, and pagination
+- Rate limits vary by portal
+
+### Census API Usage
+- Free, no authentication required for basic data
+- Supports multiple data sets (ACS, Decennial Census)
+- Geographic filters by state, county, tract, block group
+
+### Commercial APIs
+- ATTOM: Requires API key, subscription-based
+- Regrid: API key required, usage-based pricing
+- First American: Enterprise access required

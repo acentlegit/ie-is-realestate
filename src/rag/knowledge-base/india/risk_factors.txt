@@ -1,0 +1,88 @@
+# India Real Estate - Risk Factors
+
+## Market Risks
+
+### Price Volatility
+- Market corrections
+- Economic downturns
+- Interest rate changes
+- Oversupply in specific markets
+- Demonetization impacts (historical)
+
+### Location Risks
+- Infrastructure development delays
+- Environmental concerns
+- Flood-prone areas
+- Seismic zones
+- Industrial area proximity
+
+### Property Type Risks
+- Apartment oversupply in some cities
+- Land title disputes
+- Unapproved constructions
+- Delayed project completions
+
+## Regulatory Risks
+
+### RERA Compliance
+- Unregistered projects
+- Non-compliance with RERA rules
+- Builder track record issues
+- Project approval delays
+
+### Title Risks
+- Disputed ownership
+- Encumbrances
+- Multiple claims
+- Incomplete documentation
+- Fraudulent transactions
+
+### Legal Risks
+- Pending litigation
+- Court orders
+- Government acquisition
+- Zoning changes
+- Building violations
+
+## Data Quality Risks
+
+### Data Availability
+- Incomplete RERA data
+- Limited public APIs
+- State-wise variations
+- Data format inconsistencies
+
+### Data Accuracy
+- Outdated property records
+- Missing transaction data
+- Inconsistent pricing data
+- Incomplete property details
+
+### API Reliability
+- Portal downtime
+- API rate limits
+- Access restrictions
+- Data format changes
+
+## Mitigation Strategies
+
+### Due Diligence
+- Verify RERA registration
+- Check title documents
+- Review builder track record
+- Validate property approvals
+- Cross-reference multiple sources
+
+### Risk Assessment
+- Location risk scoring
+- Builder credibility assessment
+- Market condition analysis
+- Regulatory compliance checks
+- Data quality validation
+
+### Data Validation
+- Cross-reference RERA data
+- Verify with land records
+- Check property tax records
+- Validate with multiple sources
+- Check data freshness

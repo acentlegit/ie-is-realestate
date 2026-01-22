@@ -1,0 +1,277 @@
+{
+  "samples": {
+    "success_all_checks_pass": {
+      "input": {
+        "intentId": "eb013f57-b4ca-4455-b9e3-89c96b311c11",
+        "tenantId": "intent-platform",
+        "actorId": "user-123",
+        "intentType": "BUY_PROPERTY",
+        "location": "Vizag, Andhra Pradesh, India",
+        "budget": 5000000,
+        "area": "2BHK",
+        "metadata": {
+          "citizenship": "IN",
+          "residencyStatus": "CITIZEN",
+          "gpsCoordinates": {
+            "latitude": 17.6868,
+            "longitude": 83.2185
+          },
+          "propertyType": "RESIDENTIAL",
+          "intendedUse": "RESIDENCE"
+        }
+      },
+      "output": {
+        "intentId": "eb013f57-b4ca-4455-b9e3-89c96b311c11",
+        "engine": "COMPLIANCE_ENGINE",
+        "decision": "ALLOW",
+        "status": "PASSED",
+        "confidence": 1.0,
+        "blocking": true,
+        "reason": "All compliance checks passed",
+        "checks": [
+          {
+            "ruleId": "FOREIGN_NATIONAL_LAND_RESTRICTION",
+            "type": "CITIZENSHIP",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Indian citizen - eligible for all property types",
+            "details": {
+              "citizenship": "IN",
+              "residencyStatus": "CITIZEN",
+              "allowed": true
+            }
+          },
+          {
+            "ruleId": "ZONING_COMPLIANCE_CHECK",
+            "type": "ZONING",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Residential zone - allows residence and investment",
+            "details": {
+              "zone": "RESIDENTIAL",
+              "allowedUse": ["RESIDENCE", "INVESTMENT"],
+              "intendedUse": "RESIDENCE"
+            }
+          },
+          {
+            "ruleId": "LAND_EXISTENCE_VALIDATION",
+            "type": "GPS",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Valid land coordinates - not water or restricted area",
+            "details": {
+              "landType": "VALID_LAND",
+              "gpsValid": true,
+              "exists": true,
+              "latitude": 17.6868,
+              "longitude": 83.2185
+            }
+          }
+        ],
+        "timestamp": "2026-01-16T14:36:06.582Z"
+      }
+    },
+    "failure_citizenship": {
+      "input": {
+        "intentId": "failure-citizenship-001",
+        "tenantId": "intent-platform",
+        "actorId": "user-456",
+        "intentType": "BUY_PROPERTY",
+        "location": "Vizag, Andhra Pradesh, India",
+        "budget": 3000000,
+        "metadata": {
+          "citizenship": "OTHER",
+          "residencyStatus": "NON_RESIDENT",
+          "propertyType": "AGRICULTURAL"
+        }
+      },
+      "output": {
+        "intentId": "failure-citizenship-001",
+        "engine": "COMPLIANCE_ENGINE",
+        "decision": "DENY",
+        "status": "FAILED",
+        "confidence": 0.33,
+        "blocking": true,
+        "reason": "Foreign nationals cannot purchase agricultural land in India",
+        "checks": [
+          {
+            "ruleId": "FOREIGN_NATIONAL_LAND_RESTRICTION",
+            "type": "CITIZENSHIP",
+            "status": "FAIL",
+            "blocking": true,
+            "reason": "Foreign nationals cannot purchase agricultural land in India",
+            "details": {
+              "citizenship": "OTHER",
+              "residencyStatus": "NON_RESIDENT",
+              "restriction": "AGRICULTURAL_LAND",
+              "allowed": false
+            }
+          }
+        ],
+        "timestamp": "2026-01-16T14:36:06.582Z"
+      }
+    },
+    "failure_zoning": {
+      "input": {
+        "intentId": "failure-zoning-001",
+        "tenantId": "intent-platform",
+        "actorId": "user-789",
+        "intentType": "BUY_PROPERTY",
+        "location": "Vizag, Andhra Pradesh, India",
+        "budget": 4000000,
+        "metadata": {
+          "citizenship": "IN",
+          "residencyStatus": "CITIZEN",
+          "propertyType": "RESIDENTIAL",
+          "intendedUse": "COMMERCIAL"
+        }
+      },
+      "output": {
+        "intentId": "failure-zoning-001",
+        "engine": "COMPLIANCE_ENGINE",
+        "decision": "DENY",
+        "status": "FAILED",
+        "confidence": 0.5,
+        "blocking": true,
+        "reason": "Property is zoned for residential use only. Commercial use not allowed.",
+        "checks": [
+          {
+            "ruleId": "FOREIGN_NATIONAL_LAND_RESTRICTION",
+            "type": "CITIZENSHIP",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Indian citizen - eligible for all property types",
+            "details": {
+              "citizenship": "IN",
+              "residencyStatus": "CITIZEN",
+              "allowed": true
+            }
+          },
+          {
+            "ruleId": "ZONING_COMPLIANCE_CHECK",
+            "type": "ZONING",
+            "status": "FAIL",
+            "blocking": true,
+            "reason": "Property is zoned for residential use only. Commercial use not allowed.",
+            "details": {
+              "zone": "RESIDENTIAL",
+              "allowedUse": ["RESIDENCE", "INVESTMENT"],
+              "restrictedUse": ["COMMERCIAL", "INDUSTRIAL"],
+              "intendedUse": "COMMERCIAL"
+            }
+          }
+        ],
+        "timestamp": "2026-01-16T14:36:06.582Z"
+      }
+    },
+    "failure_land_existence": {
+      "input": {
+        "intentId": "failure-land-001",
+        "tenantId": "intent-platform",
+        "actorId": "user-101",
+        "intentType": "BUY_PROPERTY",
+        "location": "Vizag, Andhra Pradesh, India",
+        "budget": 6000000,
+        "metadata": {
+          "citizenship": "IN",
+          "residencyStatus": "CITIZEN",
+          "propertyType": "RESIDENTIAL",
+          "intendedUse": "RESIDENCE",
+          "gpsCoordinates": {
+            "latitude": 17.5,
+            "longitude": 83.6
+          }
+        }
+      },
+      "output": {
+        "intentId": "failure-land-001",
+        "engine": "COMPLIANCE_ENGINE",
+        "decision": "DENY",
+        "status": "FAILED",
+        "confidence": 0.67,
+        "blocking": true,
+        "reason": "Property location is in a restricted zone (water body)",
+        "checks": [
+          {
+            "ruleId": "FOREIGN_NATIONAL_LAND_RESTRICTION",
+            "type": "CITIZENSHIP",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Indian citizen - eligible for all property types",
+            "details": {
+              "citizenship": "IN",
+              "residencyStatus": "CITIZEN",
+              "allowed": true
+            }
+          },
+          {
+            "ruleId": "ZONING_COMPLIANCE_CHECK",
+            "type": "ZONING",
+            "status": "PASS",
+            "blocking": true,
+            "reason": "Residential zone - allows residence and investment",
+            "details": {
+              "zone": "RESIDENTIAL",
+              "allowedUse": ["RESIDENCE", "INVESTMENT"],
+              "intendedUse": "RESIDENCE"
+            }
+          },
+          {
+            "ruleId": "LAND_EXISTENCE_VALIDATION",
+            "type": "GPS",
+            "status": "FAIL",
+            "blocking": true,
+            "reason": "Property location is in a restricted zone (water body)",
+            "details": {
+              "landType": "WATER_BODY",
+              "gpsValid": true,
+              "exists": false,
+              "latitude": 17.5,
+              "longitude": 83.6
+            }
+          }
+        ],
+        "timestamp": "2026-01-16T14:36:06.582Z"
+      }
+    }
+  },
+  "evidence_events": {
+    "compliance_started": {
+      "eventType": "COMPLIANCE_STARTED",
+      "intentId": "eb013f57-b4ca-4455-b9e3-89c96b311c11",
+      "timestamp": "2026-01-16T14:36:06.582Z",
+      "engine": "COMPLIANCE_ENGINE",
+      "payload": {
+        "intentType": "BUY_PROPERTY",
+        "location": "Vizag, Andhra Pradesh, India"
+      }
+    },
+    "compliance_rule_checked": {
+      "eventType": "COMPLIANCE_RULE_CHECKED",
+      "intentId": "eb013f57-b4ca-4455-b9e3-89c96b311c11",
+      "timestamp": "2026-01-16T14:36:06.582Z",
+      "engine": "COMPLIANCE_ENGINE",
+      "payload": {
+        "ruleId": "FOREIGN_NATIONAL_LAND_RESTRICTION",
+        "type": "CITIZENSHIP",
+        "status": "PASS",
+        "blocking": true,
+        "reason": "Indian citizen - eligible for all property types"
+      }
+    },
+    "compliance_result": {
+      "eventType": "COMPLIANCE_RESULT",
+      "intentId": "eb013f57-b4ca-4455-b9e3-89c96b311c11",
+      "timestamp": "2026-01-16T14:36:06.582Z",
+      "engine": "COMPLIANCE_ENGINE",
+      "payload": {
+        "decision": "ALLOW",
+        "status": "PASSED",
+        "checksCount": 3,
+        "passedCount": 3,
+        "failedCount": 0,
+        "reason": "All compliance checks passed"
+      }
+    }
+  }
+}

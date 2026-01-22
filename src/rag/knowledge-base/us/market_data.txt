@@ -1,0 +1,69 @@
+# US Real Estate - Market Data
+
+## Market Data Sources
+
+### Census Data
+- Demographics by census tract
+- Income levels (median household income)
+- Housing characteristics
+- Population density
+- Education levels
+
+### County Assessor Data
+- Property assessments
+- Tax records
+- Sale history
+- Property characteristics
+
+### MLS Data
+- Active listings
+- Sold properties
+- Days on market
+- Price trends
+- Inventory levels
+
+### Market Indices
+- Local market trends
+- Regional price indices
+- National housing indices
+- Market condition indicators
+
+## Data Schema
+
+### Core Tables
+
+**property**
+- property_id, address, city, state, zip
+- lat, lon, property_type
+- year_built, sqft, beds, baths, lot_size
+
+**listing**
+- listing_id, property_id, source
+- status, list_price, list_date
+- days_on_market, description_text
+
+**transaction**
+- transaction_id, property_id
+- sale_date, sale_price, deed_ref
+
+**assessment_tax**
+- property_id, tax_year
+- assessed_value, property_tax
+
+**permit**
+- permit_id, property_id
+- permit_date, permit_type, declared_value
+
+## Market Analysis
+
+### Price Trends
+- Historical sale prices
+- Price per square foot trends
+- Market appreciation rates
+- Seasonal variations
+
+### Market Conditions
+- Inventory levels
+- Days on market trends
+- Price-to-list ratios
+- Market velocity indicators

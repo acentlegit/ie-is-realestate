@@ -1,0 +1,92 @@
+# India Real Estate - Valuation Methods
+
+## Property Valuation Model (AVM)
+
+### Hybrid Approach
+
+**Combines:**
+- Comparable-based valuation (traditional)
+- ML-based AVM (data-driven)
+- NHB RESIDEX trends (market indices)
+- Text-derived condition scores (from descriptions)
+
+### Models
+
+**LightGBM / CatBoost**
+- Recommended for Indian market
+- Handles categorical features well (city, property type)
+- Good performance with limited data
+
+### Training Features
+
+**Location Features:**
+- City, state, pincode
+- Latitude, longitude
+- Neighborhood characteristics
+- Proximity to amenities
+
+**Property Features:**
+- Carpet area (sqft)
+- Built-up area (sqft)
+- Super built-up area (sqft)
+- Number of bedrooms
+- Number of bathrooms
+- Floor number
+- Total floors in building
+
+**Market Features:**
+- NHB RESIDEX value for city
+- Quarterly market trends
+- Local market conditions
+- Price per sqft trends
+
+**Amenities:**
+- Parking availability
+- Lift availability
+- Power backup
+- Security
+- Clubhouse, gym, etc.
+
+**Text Features:**
+- Property description analysis
+- Condition keywords
+- Amenity mentions
+- Location mentions
+
+### Outputs
+
+**Point Estimate:**
+- Predicted property value in INR
+- Confidence score (0-1)
+
+**Confidence Interval:**
+- Lower bound estimate
+- Upper bound estimate
+
+**Feature Importance:**
+- SHAP values for explainability
+- Top contributing factors
+
+### Valuation Methodology
+
+**Step 1: Comparable Selection**
+- Filter by: City, property type, size range (±20%)
+- Time window: Last 6-12 months
+- Distance: Within same locality/area
+
+**Step 2: Adjustments**
+- Size adjustment (per sqft rate)
+- Age adjustment (depreciation)
+- Floor adjustment (premium/discount)
+- Amenity adjustment
+- Location adjustment (locality premium)
+
+**Step 3: ML Model Prediction**
+- Input: All property and market features
+- Output: ML-based value estimate
+
+**Step 4: Final Valuation**
+- Weighted average:
+  - Comparable-based: 50%
+  - ML model: 40%
+  - Market trend: 10%

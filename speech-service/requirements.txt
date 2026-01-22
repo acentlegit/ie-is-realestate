@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+websockets
+torch
+numpy
+openai-whisper
+soundfile
+ffmpeg-python
+certifi
+pyopenssl

@@ -1,0 +1,169 @@
+
+> dev
+> vite
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+Port 3000 is in use, trying another one...
+Port 3001 is in use, trying another one...
+Port 3002 is in use, trying another one...
+Port 3003 is in use, trying another one...
+Port 3004 is in use, trying another one...
+
+  VITE v5.4.21  ready in 170 ms
+
+  ➜  Local:   http://localhost:3005/
+9:07:14 PM [vite] hmr update /src/routes/App.jsx
+9:07:16 PM [vite] hmr update /src/routes/App.jsx
+9:10:58 PM [vite] hmr update /src/routes/App.jsx
+9:12:46 PM [vite] hmr update /src/screens/Intent.jsx
+9:13:15 PM [vite] hmr update /src/screens/Intent.jsx
+9:13:44 PM [vite] hmr update /src/screens/Intent.jsx
+9:14:42 PM [vite] hmr update /src/screens/Intent.jsx
+9:15:26 PM [vite] hmr update /src/screens/Intent.jsx
+9:15:30 PM [vite] hmr update /src/screens/Intent.jsx
+9:16:10 PM [vite] hmr update /src/screens/Intent.jsx
+9:16:18 PM [vite] hmr update /src/screens/Intent.jsx
+9:19:39 PM [vite] hmr update /src/screens/Intent.jsx
+9:20:05 PM [vite] hmr update /src/screens/Intent.jsx
+9:20:12 PM [vite] hmr update /src/screens/Intent.jsx
+9:20:35 PM [vite] hmr update /src/screens/Intent.jsx
+9:21:19 PM [vite] hmr update /src/screens/Intent.jsx
+9:21:20 PM [vite] hmr update /src/screens/Intent.jsx
+9:21:33 PM [vite] page reload src/main.jsx
+9:22:44 PM [vite] hmr update /src/screens/Intent.jsx
+9:27:05 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:05 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:14 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:16 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:17 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:20 PM [vite] hmr update /src/screens/Intent.jsx
+9:28:50 PM [vite] page reload src/main.jsx
+9:30:03 PM [vite] hmr update /src/screens/Intent.jsx
+9:30:23 PM [vite] hmr update /src/screens/Intent.jsx
+9:30:44 PM [vite] hmr update /src/screens/Intent.jsx
+9:30:45 PM [vite] hmr update /src/screens/Intent.jsx
+9:30:49 PM [vite] hmr update /src/screens/Intent.jsx
+9:31:09 PM [vite] hmr update /src/screens/Intent.jsx
+9:32:54 PM [vite] hmr update /src/screens/Intent.jsx
+9:34:49 PM [vite] hmr update /src/screens/Intent.jsx
+9:41:07 PM [vite] hmr update /src/screens/Intent.jsx
+9:43:28 PM [vite] hmr update /src/screens/Intent.jsx
+9:45:10 PM [vite] hmr update /src/screens/Intent.jsx
+9:48:08 PM [vite] hmr update /src/screens/Intent.jsx
+9:55:52 PM [vite] hmr update /src/screens/Intent.jsx
+9:56:16 PM [vite] hmr update /src/screens/Intent.jsx
+10:10:16 PM [vite] hmr update /src/screens/Intent.jsx
+10:10:32 PM [vite] hmr update /src/screens/Intent.jsx
+10:10:44 PM [vite] hmr update /src/screens/Intent.jsx
+10:11:19 PM [vite] hmr update /src/screens/Intent.jsx
+7:56:58 PM [vite] hmr update /src/screens/Intent.jsx
+7:57:17 PM [vite] hmr update /src/screens/Intent.jsx
+7:58:08 PM [vite] hmr update /src/screens/Intent.jsx
+8:00:41 PM [vite] hmr update /src/screens/Intent.jsx
+8:02:00 PM [vite] hmr update /src/screens/Intent.jsx
+8:03:32 PM [vite] hmr update /src/screens/Intent.jsx
+8:05:00 PM [vite] hmr update /src/screens/Intent.jsx
+8:05:06 PM [vite] hmr update /src/screens/Intent.jsx
+8:17:27 PM [vite] hmr update /src/screens/Intent.jsx
+8:25:22 PM [vite] hmr update /src/screens/Intent.jsx
+8:25:26 PM [vite] hmr update /src/screens/Intent.jsx
+9:04:09 PM [vite] hmr update /src/screens/Intent.jsx
+9:04:21 PM [vite] hmr update /src/screens/Intent.jsx
+9:04:26 PM [vite] hmr update /src/screens/Intent.jsx
+9:04:38 PM [vite] hmr update /src/screens/Intent.jsx
+9:04:43 PM [vite] hmr update /src/screens/Intent.jsx
+9:08:29 PM [vite] hmr update /src/screens/Intent.jsx
+9:08:56 PM [vite] hmr update /src/screens/Intent.jsx
+9:09:32 PM [vite] hmr update /src/screens/Intent.jsx
+9:12:14 PM [vite] hmr update /src/screens/Intent.jsx
+9:12:26 PM [vite] hmr update /src/screens/Intent.jsx
+9:12:50 PM [vite] hmr update /src/screens/Intent.jsx
+9:13:01 PM [vite] hmr update /src/screens/Intent.jsx
+9:13:26 PM [vite] hmr update /src/screens/Intent.jsx
+9:13:32 PM [vite] hmr update /src/screens/Intent.jsx
+9:39:41 PM [vite] hmr update /src/screens/Intent.jsx
+9:39:49 PM [vite] hmr update /src/screens/Intent.jsx, /src/dashboards/BuyerDashboard.jsx
+9:39:52 PM [vite] hmr update /src/screens/Intent.jsx
+9:40:23 PM [vite] hmr update /src/screens/Intent.jsx, /src/dashboards/BuyerDashboard.jsx
+9:40:24 PM [vite] hmr update /src/screens/Intent.jsx
+9:46:33 PM [vite] hmr update /src/screens/Intent.jsx
+9:47:30 PM [vite] hmr update /src/screens/Intent.jsx
+10:03:18 PM [vite] hmr update /src/screens/Intent.jsx
+10:03:27 PM [vite] hmr update /src/screens/Intent.jsx
+10:03:42 PM [vite] hmr update /src/screens/Intent.jsx
+10:03:46 PM [vite] hmr update /src/screens/Intent.jsx
+10:03:49 PM [vite] hmr update /src/screens/Intent.jsx
+10:04:02 PM [vite] hmr update /src/screens/Intent.jsx
+10:04:19 PM [vite] hmr update /src/screens/Intent.jsx
+10:09:23 PM [vite] hmr update /src/screens/Intent.jsx
+10:10:13 PM [vite] hmr update /src/screens/Intent.jsx
+10:10:19 PM [vite] hmr update /src/screens/Intent.jsx
+10:11:14 PM [vite] hmr update /src/screens/Intent.jsx
+10:22:45 PM [vite] hmr update /src/screens/Intent.jsx
+10:22:45 PM [vite] hmr update /src/screens/Intent.jsx, /src/dashboards/BuyerDashboard.jsx
+10:23:44 PM [vite] hmr update /src/screens/Intent.jsx
+10:38:24 PM [vite] hmr update /src/screens/Intent.jsx
+10:38:28 PM [vite] hmr update /src/screens/Intent.jsx
+10:38:35 PM [vite] hmr update /src/screens/Intent.jsx
+10:38:43 PM [vite] hmr update /src/screens/Intent.jsx
+10:38:53 PM [vite] hmr update /src/screens/Intent.jsx
+10:39:01 PM [vite] hmr update /src/screens/Intent.jsx
+10:39:23 PM [vite] hmr update /src/screens/Intent.jsx
+10:39:35 PM [vite] hmr update /src/screens/Intent.jsx
+10:39:44 PM [vite] hmr update /src/screens/Intent.jsx
+10:39:55 PM [vite] hmr update /src/screens/Intent.jsx
+10:40:02 PM [vite] hmr update /src/screens/Intent.jsx
+11:05:53 PM [vite] hmr update /src/screens/Intent.jsx
+11:05:53 PM [vite] hmr update /src/screens/Intent.jsx, /src/dashboards/BuyerDashboard.jsx
+11:06:45 PM [vite] hmr update /src/screens/Intent.jsx
+11:16:42 PM [vite] hmr update /src/screens/Intent.jsx
+11:33:55 PM [vite] hmr update /src/screens/Intent.jsx
+11:43:04 PM [vite] hmr update /src/screens/Intent.jsx
+11:43:16 PM [vite] hmr update /src/screens/Intent.jsx
+11:46:21 PM [vite] hmr update /src/screens/Intent.jsx
+12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+12:32:29 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+12:32:29 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+12:32:34 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+12:32:34 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+12:39:38 AM [vite] .env changed, restarting server...
+12:39:38 AM [vite] .env changed, restarting server...
+12:39:38 AM [vite] server restarted.
+12:39:51 AM [vite] .env changed, restarting server...
+12:39:51 AM [vite] server restarted.
+1:04:40 AM [vite] .env changed, restarting server...
+1:04:40 AM [vite] server restarted.
+2:01:10 AM [vite] page reload deploy/frontend/index.html
+2:01:23 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+2:01:26 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+2:01:27 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+2:01:27 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+2:01:28 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+2:01:28 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+2:09:07 AM [vite] page reload deploy/frontend/dist/index.html
+2:09:21 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+2:09:24 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+2:09:25 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+2:09:25 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+hmr update /src/screens/Intent.jsx
+12:32:24 AM [vite] page reload speech-servi12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests12:32:24 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+12:32:29 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+12:32:29 AM [vite] page reload speech-servi12:32:34 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+12:32:34 AM [vite] page reload speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+12:39:38 AM [vite] .env changed, restarting server...
+12:39:38 AM [vite] .env changed, restarting server...
+12:39:38 AM [vite] server restarted.
+12:39:51 AM [vite] .env changed, restarting server...
+12:39:51 AM [vite] server restarted.
+1:04:40 AM [vite] .env changed, restarting server...
+1:04:40 AM [vite] server restarted.
+2:01:10 AM [vite] page reload deploy/frontend/index.html
+2:01:23 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/torch/utils/model_dump/skeleton.html
+2:01:26 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/si2:01:27 AM [vite] page reload deploy/speech-servi2:01:27 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/si2:01:27 AM [vite] page reload deploy/speech-service/venv/lib/python3.142:01:28 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html
+2:01:28 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/si2:09:07 AM [vite] page reload deploy/frontend/dist/index.html
+2:09:21 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packa2:09:21 AM [vite] page reload deploy/spee2:09:24 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/numba/core/annotations/template.html
+2:09:25 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packa2:09:25 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/external.html
+2:09:25 AM [vite] page reload deploy/speech-service/venv/lib/python3.14/site-packages/setuptools/tests/indexes/test_links_priority/simple/foobar/index.html

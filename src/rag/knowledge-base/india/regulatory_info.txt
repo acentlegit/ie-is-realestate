@@ -1,0 +1,112 @@
+# India Real Estate - Regulatory Information
+
+## RERA (Real Estate Regulatory Authority)
+
+### Overview
+- Established under Real Estate (Regulation and Development) Act, 2016
+- State-wise implementation
+- Each state has its own RERA authority
+
+### Key Regulations
+
+**Project Registration:**
+- All real estate projects must be registered with RERA
+- Registration number required for marketing
+- Project details must be disclosed
+
+**Agent Registration:**
+- Real estate agents must be registered
+- Registration number required
+- Compliance with RERA rules mandatory
+
+**Developer Obligations:**
+- 70% of funds must be in escrow
+- Project completion timelines
+- Quality standards compliance
+- Regular updates to RERA
+
+### State RERA Portals
+
+**Major States:**
+- Maharashtra RERA: https://maharera.mahaonline.gov.in
+- Karnataka RERA: https://rera.karnataka.gov.in
+- Tamil Nadu RERA: https://tnerera.gov.in
+- Telangana RERA: https://rera.telangana.gov.in
+- Andhra Pradesh RERA: https://rera.ap.gov.in
+
+### RERA Data Access
+
+**Public Data:**
+- Registered projects
+- Registered agents
+- Registered developers
+- Project approvals
+- Compliance status
+
+**API Access:**
+- Some states provide API access via data.gov.in
+- Most require web portal access
+- Check individual state portals
+
+## Land Registration
+
+### NGDRS (National Generic Document Registration System)
+- Standardized registration across states
+- Digital document registration
+- Online payment integration
+
+### DILRMP (Digital India Land Records Modernisation Programme)
+- Digital land records
+- Property ownership records
+- Encumbrance certificates
+
+### State-Specific Portals
+
+**Karnataka:**
+- Bhoomi system
+- Land records online
+- Property registration
+
+**Telangana:**
+- Dharani portal
+- Land records
+- Property registration
+
+**Maharashtra:**
+- Mahabhumi portal
+- Land records
+- Property services
+
+## Compliance Requirements
+
+### For Developers
+- RERA registration mandatory
+- Project disclosure requirements
+- Escrow account maintenance
+- Quality standards compliance
+
+### For Agents
+- RERA registration required
+- Code of conduct compliance
+- Disclosure requirements
+
+### For Buyers
+- Verify RERA registration
+- Check project approvals
+- Review builder track record
+- Due diligence on property
+
+## Legal Framework
+
+### Key Acts
+- Real Estate (Regulation and Development) Act, 2016
+- Transfer of Property Act, 1882
+- Registration Act, 1908
+- State-specific land laws
+
+### Documentation
+- Sale deed
+- Title documents
+- Encumbrance certificate
+- Building approval plans
+- Occupancy certificate

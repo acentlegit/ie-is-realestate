@@ -1,0 +1,64 @@
+# US Real Estate - Valuation Methods
+
+## 3. Property Valuation Model (AVM)
+
+### 3.1 Comparable-Based Valuation
+
+**Method:**
+Comparable sales are filtered by:
+- Distance (geographic proximity)
+- Property type (single-family, condo, etc.)
+- Size (square footage range)
+- Sale recency (typically last 6-12 months)
+
+**Adjustments Applied:**
+- Square footage differences
+- Age of property
+- Condition/renovation status
+- Parking availability
+- Amenities (pool, garage, etc.)
+- School district quality
+- Neighborhood characteristics
+
+**Output:**
+- Estimated value range
+- Confidence score based on comparable quality
+- Adjustment factors applied
+
+### 3.2 Machine Learning AVM
+
+**Models:**
+- LightGBM (recommended)
+- XGBoost (alternative)
+
+**Training Features:**
+- Property size (sqft)
+- Bedrooms and bathrooms
+- Year built / age
+- Location (lat/lon, census tract)
+- School district scores
+- Tax assessments
+- Market indices (local/regional)
+- Days on market
+- Property type
+- Lot size
+
+**Outputs:**
+- Point estimate (predicted value)
+- Confidence interval (lower/upper bounds)
+- SHAP explanations (feature importance)
+- Model version and training date
+
+### 3.3 Hybrid Approach
+
+**Combines:**
+- Comparable sales analysis (traditional)
+- ML model predictions (data-driven)
+- Market trend adjustments
+- Local market conditions
+
+**Final Valuation:**
+Weighted average of:
+- Comparable-based estimate (40%)
+- ML model prediction (40%)
+- Market trend adjustment (20%)

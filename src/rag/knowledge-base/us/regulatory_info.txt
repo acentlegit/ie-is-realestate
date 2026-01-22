@@ -1,0 +1,43 @@
+# US Real Estate - Regulatory Information
+
+## State-Specific Real Estate Laws
+
+### Common Regulations
+- Disclosure requirements vary by state
+- Property transfer taxes
+- Recording fees
+- Title insurance requirements
+- Escrow procedures
+
+### State-Level Variations
+- California: Extensive disclosure requirements
+- Texas: Different title procedures
+- New York: Co-op/condo specific regulations
+- Florida: Coastal property regulations
+
+## Data Privacy & Compliance
+
+### Data Usage Regulations
+- Fair Housing Act compliance
+- Consumer Financial Protection Bureau (CFPB) rules
+- State privacy laws (CCPA, etc.)
+- MLS data usage restrictions
+
+### API Usage Compliance
+- Census data: Public use, attribution required
+- County data: Check individual portal terms
+- Commercial APIs: Subscription terms apply
+
+## Property Records Access
+
+### Public Records
+- County assessor records (public)
+- Deed records (public)
+- Permit records (public)
+- Tax records (public)
+
+### Access Methods
+- County websites
+- Socrata portals
+- Direct API access
+- Bulk data downloads

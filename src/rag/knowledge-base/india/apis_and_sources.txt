@@ -1,0 +1,101 @@
+# India Real Estate - APIs & Data Sources
+
+## 1. Core Indian Data Sources
+
+### 1.1 Market Price Indices (Open)
+
+**NHB RESIDEX – Official Housing Price Index of India**
+- Portal: https://residex.nhbonline.org.in/
+- Methodology: https://www.nhb.org.in/wp-content/uploads/2023/12/WHITE-PAPER-NHB-RESIDEX-METHODOLOGY.pdf
+- Provides: City-wise housing price indices, quarterly updates
+
+### 1.2 Government Open APIs (data.gov.in)
+
+**API Hub:**
+- URL: https://www.data.gov.in/apis
+
+**Example: RERA Project & Agent Data**
+- URL: https://api.data.gov.in/resource/81242853-a9f9-44f4-a100-ea817d9c9ebe?api-key=<API_KEY>&format=json
+- Requires: API key registration at data.gov.in
+- Provides: RERA registered projects, agents, developers
+
+### 1.3 Land Registration Systems (Semi-open)
+
+**NGDRS (National Generic Document Registration System)**
+- URL: https://ngdrs.gov.in/
+- Purpose: Standardized land registration across states
+- Access: State-specific portals
+
+**DILRMP (Digital India Land Records Modernisation Programme)**
+- URL: https://dilrmp.gov.in/
+- Purpose: Digital land records management
+- Access: State-specific implementation
+
+### 1.4 State Land Record Portals (Examples)
+
+**Karnataka:**
+- URL: https://landrecords.karnataka.gov.in
+- Provides: Land records, property details
+
+**Telangana:**
+- URL: https://dharani.telangana.gov.in
+- Provides: Land records, property registration
+
+**Maharashtra:**
+- URL: https://mahabhumi.gov.in
+- Provides: Land records, property details
+
+**Tamil Nadu:**
+- URL: https://eservices.tn.gov.in
+- Provides: Land records, property services
+
+**Andhra Pradesh:**
+- URL: https://meebhoomi.ap.gov.in
+- Provides: Land records, property details
+
+### 1.5 Geo & POI Data (Open)
+
+**Nominatim (Geocoding)**
+- URL: https://nominatim.openstreetmap.org/
+- Provides: Address to coordinates conversion
+- Usage: Free, rate-limited
+
+**Overpass API (POIs)**
+- URL: https://overpass-api.de/api/interpreter
+- Provides: Points of interest, amenities
+- Usage: Free, OpenStreetMap data
+
+### 1.6 Census & Demographics
+
+**Census of India**
+- URL: https://censusindia.gov.in/
+- Provides: Population, housing, demographic data
+
+**Census Datasets**
+- URL: https://data.gov.in/organization/census-india
+- Provides: Structured census data via API
+
+## 2. RERA (Real Estate Regulatory Authority) Data
+
+### State RERA Portals
+- Each state has its own RERA portal
+- Provides: Registered projects, agents, developers
+- Data: Project details, approvals, compliance status
+
+### RERA API Access
+- Some states provide API access
+- Most require web scraping or manual data collection
+- Check individual state RERA portals for data access
+
+## 3. Property Portals (Commercial)
+
+### Major Portals
+- 99acres.com
+- MagicBricks.com
+- Housing.com
+- CommonFloor.com
+
+### Data Access
+- Most portals don't provide public APIs
+- May require partnerships or scraping (with permission)
+- Check terms of service before accessing

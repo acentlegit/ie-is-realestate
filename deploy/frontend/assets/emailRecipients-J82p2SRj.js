@@ -1,0 +1,1 @@
+function l(i,t,E){const c=[E];switch(i){case"SELECT_AGENT":if(t.selectedOption){const e=t.selectedOption.email||t.selectedOption.contactEmail;e&&c.push(e)}break;case"SELECT_PROPERTY":break;case"SELECT_LENDER":if(t.selectedOption){const e=t.selectedOption.email||t.selectedOption.contactEmail;e&&c.push(e)}break}return c.filter(e=>e)}export{l as getDecisionEmailRecipients};
