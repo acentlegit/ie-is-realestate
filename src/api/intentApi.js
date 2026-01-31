@@ -1,27 +1,49 @@
 import { getToken } from "../auth/keycloakAuth";
 
 // Individual Engines - Each engine on its own port (original architecture)
-// To use unified engine, set VITE_USE_UNIFIED_ENGINE=true and VITE_UNIFIED_ENGINE_URL=http://localhost:8000
-const UNIFIED_ENGINE_URL = import.meta.env.VITE_UNIFIED_ENGINE_URL || null;
+// To use unified engine, set VITE_USE_UNIFIED_ENGINE=true and VITE_UNIFIED_ENGINE_URL="" (same-origin) or full URL
+const UNIFIED_ENGINE_URL = (import.meta.env.VITE_UNIFIED_ENGINE_URL ?? "").toString().replace(/\/$/, "");
 const USE_UNIFIED_ENGINE = import.meta.env.VITE_USE_UNIFIED_ENGINE === "true"; // Default: false (use individual engines)
 
-const API_BASE = "http://localhost:8000";
-const INTENT_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1/intent` : "http://localhost:7001";
-const COMPLIANCE_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1/compliance` : "http://localhost:7002";
-const DECISION_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1` : "http://localhost:7003";
-const ACTION_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1` : "http://localhost:7004";
-const RISK_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1/risk` : "http://localhost:7005";
-const EXPLAINABILITY_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1/explainability` : "http://localhost:7006";
-const EVIDENCE_ENGINE_URL = USE_UNIFIED_ENGINE ? `${UNIFIED_ENGINE_URL}/v1` : "http://localhost:7007"; // Phase 12
+// Production: Use relative paths via Nginx (/api/...)
+// Development: Use localhost URLs
+const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+const API_BASE = import.meta.env.VITE_API_BASE || (isProduction ? '' : "http://localhost:8000");
+
+// Engine URLs - Support environment variables or use relative paths in production
+const INTENT_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1/intent` 
+  : (import.meta.env.VITE_INTENT_ENGINE_URL || (isProduction ? '/api/intent' : "http://localhost:7001"));
+const COMPLIANCE_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1/compliance` 
+  : (import.meta.env.VITE_COMPLIANCE_ENGINE_URL || (isProduction ? '/api/compliance' : "http://localhost:7002"));
+const DECISION_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1` 
+  : (import.meta.env.VITE_DECISION_ENGINE_URL || (isProduction ? '/api/decision' : "http://localhost:7003"));
+const ACTION_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1` 
+  : (import.meta.env.VITE_ACTION_ENGINE_URL || (isProduction ? '/api/action' : "http://localhost:7004"));
+const RISK_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1/risk` 
+  : (import.meta.env.VITE_RISK_ENGINE_URL || (isProduction ? '/api/risk' : "http://localhost:7005"));
+// In dev, use /api/explainability so Vite proxies to engine (7006). Avoids ERR_CONNECTION_REFUSED when engine is down.
+const EXPLAINABILITY_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1/explainability` 
+  : (import.meta.env.VITE_EXPLAINABILITY_ENGINE_URL || "/api/explainability");
+const EVIDENCE_ENGINE_URL = USE_UNIFIED_ENGINE 
+  ? `${UNIFIED_ENGINE_URL}/v1` 
+  : (import.meta.env.VITE_EVIDENCE_ENGINE_URL || (isProduction ? '/api/evidence' : "http://localhost:7007")); // Phase 12
 
 // Phase 14: RAG Integration - Ollama base URL (configurable)
 // Vite uses import.meta.env instead of process.env
-const OLLAMA_BASE_URL = import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
+// In production, Ollama is typically not available, so we skip it
+const OLLAMA_BASE_URL = import.meta.env.VITE_OLLAMA_URL || (isProduction ? null : "http://localhost:11434");
 
 // Phase 13.1: Voice Agent Evidence Emission
 export async function emitVoiceEvidence(data) {
   try {
-    const res = await fetch(`${EVIDENCE_ENGINE_URL}/v1/execute`, {
+    const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+    const res = await fetch(`${EVIDENCE_ENGINE_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -53,9 +75,10 @@ export async function emitVoiceEvidence(data) {
   }
 }
 
-// Intent Engine API
+// Intent Engine API (unified: /v1/intent/execute; individual: /v1/execute)
 export async function analyzeIntent(payload) {
-  const res = await fetch(`${INTENT_ENGINE_URL}/v1/execute`, {
+  const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+  const res = await fetch(`${INTENT_ENGINE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -71,9 +94,10 @@ export async function analyzeIntent(payload) {
   return res.json();
 }
 
-// Compliance Engine API
+// Compliance Engine API (unified: /v1/compliance/execute; individual: /v1/execute)
 export async function checkCompliance(intent) {
-  const res = await fetch(`${COMPLIANCE_ENGINE_URL}/v1/execute`, {
+  const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+  const res = await fetch(`${COMPLIANCE_ENGINE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -100,24 +124,52 @@ export async function checkCompliance(intent) {
 
 // Decision Engine API
 export async function getDecisions(intent, complianceStatus, existingDecisions = []) {
-  const res = await fetch(`${DECISION_ENGINE_URL}/v1/execute`, {
+  // Ensure location and budget are in payload for location-specific decisions
+  const payload = {
+    ...(intent.payload || {}),
+    // Ensure location is present (from payload, extractedInfo, or text)
+    location: intent.payload?.location || 
+              intent.extractedInfo?.location || 
+              intent.extractedInfo?.city ||
+              intent.extractedInfo?.state ||
+              null,
+    // Ensure budget is present
+    budget: intent.payload?.budget || 
+            intent.extractedInfo?.budget ||
+            null,
+    // Include area if available
+    area: intent.payload?.area || intent.extractedInfo?.area || null,
+  };
+
+  const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+  const url = `${DECISION_ENGINE_URL}${path}`;
+  const body = {
+    intent: {
+      id: intent.id,
+      type: intent.type,
+      payload: payload,
+      extractedInfo: intent.extractedInfo || {}, // Pass extractedInfo for location-specific decisions
+      text: intent.text || intent.originalText || "", // Pass original text for context
+      complianceStatus,
+    },
+    existingDecisions,
+  };
+  if (typeof console !== "undefined" && console.log) {
+    console.log("[Decision API] POST", url, "complianceStatus:", complianceStatus);
+  }
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      intent: {
-        id: intent.id,
-        type: intent.type,
-        payload: intent.payload,
-        complianceStatus,
-      },
-      existingDecisions,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errorText = await res.text();
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn("[Decision API] Failed:", res.status, errorText);
+    }
     throw new Error(`Decision engine failed: ${errorText}`);
   }
 
@@ -127,34 +179,46 @@ export async function getDecisions(intent, complianceStatus, existingDecisions =
 // Action Engine API
 export async function getActions(intent, decisions, lifecycleState, existingActions = []) {
   try {
+    // Validate intent object - ensure it's complete
+    if (!intent || typeof intent !== 'object') {
+      throw new Error("Intent must be a complete object with id, type, and payload");
+    }
+    
+    if (!intent.id || !intent.type) {
+      throw new Error("Intent must have id and type properties");
+    }
+
     // Use correct endpoint based on engine type
-    const url = USE_UNIFIED_ENGINE 
-      ? `${ACTION_ENGINE_URL}/action/execute`
-      : `${ACTION_ENGINE_URL}/v1/execute`;
+    const path = USE_UNIFIED_ENGINE ? "/action/execute" : "/v1/execute";
+    const url = `${ACTION_ENGINE_URL}${path}`;
     
     console.log("[Action Engine] Fetching actions from:", url);
     console.log("[Action Engine] Request payload:", {
-      intent: intent?.id || intent?.type,
+      intent: intent.id,
+      intentType: intent.type,
       decisionsCount: decisions?.length || 0,
       lifecycleState,
       existingActionsCount: existingActions?.length || 0
     });
+
+    // Build complete payload - MANDATORY for Action Engine statefulness
+    const payload = {
+      intent: {
+        id: intent.id,
+        type: intent.type,
+        payload: intent.payload || {},
+      },
+      decisions: Array.isArray(decisions) ? decisions : [],
+      lifecycleState: lifecycleState || "AWAITING_DECISIONS",
+      existingActions: Array.isArray(existingActions) ? existingActions : [],
+    };
 
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        intent: {
-          id: intent.id,
-          type: intent.type,
-          payload: intent.payload,
-        },
-        decisions: decisions || [],
-        lifecycleState: lifecycleState || "AWAITING_DECISIONS",
-        existingActions: existingActions || [],
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -187,41 +251,62 @@ export async function getActions(intent, decisions, lifecycleState, existingActi
   }
 }
 
-// Phase 5.1: Resume API
+// Phase 5.1: Resume API — tolerates HTML/404/non-JSON (e.g. when Decision Engine is not running or URL hits dev server)
 export async function checkResume(userId, tenantId) {
   try {
-    const res = await fetch(`${DECISION_ENGINE_URL}/v1/intent/resume?userId=${encodeURIComponent(userId)}&tenantId=${encodeURIComponent(tenantId)}`, {
+    const path = USE_UNIFIED_ENGINE ? "/intent/resume" : "/v1/intent/resume";
+  const res = await fetch(`${DECISION_ENGINE_URL}${path}?userId=${encodeURIComponent(userId)}&tenantId=${encodeURIComponent(tenantId)}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
     });
 
+    const text = await res.text();
+    const contentType = res.headers.get("Content-Type") || "";
+
     if (!res.ok) {
-      // If engine is not available, return empty result instead of throwing
-      if (res.status === 0 || res.status >= 500) {
+      if (res.status >= 500 || res.status === 0) {
         console.warn("Decision Engine not available for resume check");
         return { hasOpenIntent: false, resumable: false };
       }
-      const errorText = await res.text();
-      throw new Error(`Resume check failed: ${errorText}`);
+      // 404 / 4xx often return HTML when the URL hits the app server
+      if (res.status === 404 || !contentType.includes("application/json") || text.trim().startsWith("<")) {
+        console.warn("Resume API call failed (this is OK if Decision Engine is not running)");
+        return { hasOpenIntent: false, resumable: false };
+      }
+      throw new Error(`Resume check failed: ${text.slice(0, 200)}`);
     }
 
-    return res.json();
-  } catch (error) {
-    // Network errors or connection refused - engine not running
-    if (error.message.includes("Failed to fetch") || error.message.includes("ERR_CONNECTION_REFUSED")) {
-      console.warn("Decision Engine not running - resume check skipped");
+    if (!contentType.includes("application/json") || text.trim().startsWith("<")) {
+      console.warn("Resume API returned non-JSON (this is OK if Decision Engine is not running)");
       return { hasOpenIntent: false, resumable: false };
     }
-    // Re-throw other errors
+    try {
+      return JSON.parse(text);
+    } catch {
+      console.warn("Resume API returned invalid JSON");
+      return { hasOpenIntent: false, resumable: false };
+    }
+  } catch (error) {
+    const msg = error.message || String(error);
+    if (
+      msg.includes("Failed to fetch") ||
+      msg.includes("ERR_CONNECTION_REFUSED") ||
+      msg.includes("Unexpected token") ||
+      msg.includes("is not valid JSON")
+    ) {
+      console.warn("Resume API call failed (this is OK if Decision Engine is not running):", msg.slice(0, 80));
+      return { hasOpenIntent: false, resumable: false };
+    }
     throw error;
   }
 }
 
 // Phase 5.2: Decision Selection API
 export async function selectDecision(decisionId, optionId, userId, confirm = false) {
-  const res = await fetch(`${DECISION_ENGINE_URL}/v1/decision/${decisionId}/select`, {
+  const path = USE_UNIFIED_ENGINE ? `/decision/${decisionId}/select` : `/v1/decision/${decisionId}/select`;
+  const res = await fetch(`${DECISION_ENGINE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -243,7 +328,8 @@ export async function selectDecision(decisionId, optionId, userId, confirm = fal
 
 // Phase 5.2: Decision Change API
 export async function changeDecision(decisionId, newOptionId, reason, userId) {
-  const res = await fetch(`${DECISION_ENGINE_URL}/v1/decision/${decisionId}/change`, {
+  const path = USE_UNIFIED_ENGINE ? `/decision/${decisionId}/change` : `/v1/decision/${decisionId}/change`;
+  const res = await fetch(`${DECISION_ENGINE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -265,6 +351,17 @@ export async function changeDecision(decisionId, newOptionId, reason, userId) {
 
 // Phase 5.3: Action Outcome API
 export async function updateActionOutcome(actionId, outcome, userId, reason = null, scheduledFor = null) {
+  // Validate required parameters
+  if (!actionId) {
+    throw new Error("Action ID is required");
+  }
+  
+  if (!userId) {
+    // Fallback to default user if not provided
+    userId = "dev";
+    console.warn("[Action Outcome] userId not provided, using default:", userId);
+  }
+
   const body = {
     outcome,
     userId,
@@ -278,7 +375,8 @@ export async function updateActionOutcome(actionId, outcome, userId, reason = nu
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-    const res = await fetch(`${ACTION_ENGINE_URL}/v1/action/${actionId}/outcome`, {
+    const path = USE_UNIFIED_ENGINE ? `/action/${actionId}/outcome` : `/v1/action/${actionId}/outcome`;
+    const res = await fetch(`${ACTION_ENGINE_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -291,7 +389,13 @@ export async function updateActionOutcome(actionId, outcome, userId, reason = nu
 
     if (!res.ok) {
       const errorText = await res.text();
-      throw new Error(`Action outcome update failed: ${errorText}`);
+      
+      // Handle NOT_FOUND specifically - action was not found in Redis
+      if (res.status === 404 || errorText.includes("NOT_FOUND") || errorText.includes("not found")) {
+        throw new Error(`Action ${actionId} not found. This usually means the action was regenerated. Please refresh and try again.`);
+      }
+      
+      throw new Error(`Action outcome update failed (${res.status}): ${errorText}`);
     }
 
     return res.json();
@@ -309,7 +413,8 @@ export async function updateActionOutcome(actionId, outcome, userId, reason = nu
 // Phase 11: Risk Engine API
 export async function evaluateRisk(intent, complianceResult, decisions = []) {
   try {
-    const res = await fetch(`${RISK_ENGINE_URL}/v1/execute`, {
+    const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+    const res = await fetch(`${RISK_ENGINE_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -350,7 +455,8 @@ export async function evaluateRisk(intent, complianceResult, decisions = []) {
 // Phase 11: Explainability Engine API
 export async function getExplainability(intent, complianceResult, riskResult, decisions = []) {
   try {
-    const res = await fetch(`${EXPLAINABILITY_ENGINE_URL}/v1/execute`, {
+    const path = USE_UNIFIED_ENGINE ? "/execute" : "/v1/execute";
+    const res = await fetch(`${EXPLAINABILITY_ENGINE_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -367,9 +473,13 @@ export async function getExplainability(intent, complianceResult, riskResult, de
     });
 
     if (!res.ok) {
-      // If engine is not available, return null instead of throwing
-      if (res.status === 0 || res.status >= 500) {
-        console.warn("Explainability Engine not available");
+      // If engine is not available or method not allowed (405), return null instead of throwing
+      if (res.status === 0 || res.status >= 500 || res.status === 405) {
+        // Suppress 405 errors in production (route might not be registered)
+        const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+        if (!isProduction || res.status !== 405) {
+          console.warn("Explainability Engine not available");
+        }
         return null;
       }
       const errorText = await res.text();
@@ -391,7 +501,8 @@ export async function getExplainability(intent, complianceResult, riskResult, de
 // Phase 12: Evidence Engine API
 export async function getEvidenceByIntent(intentId) {
   try {
-    const res = await fetch(`${EVIDENCE_ENGINE_URL}/v1/intent/${intentId}/evidence`, {
+    const path = USE_UNIFIED_ENGINE ? `/intent/${intentId}/evidence` : `/v1/intent/${intentId}/evidence`;
+    const res = await fetch(`${EVIDENCE_ENGINE_URL}${path}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -440,47 +551,65 @@ export async function makeOffer(payload) {
   return res.json();
 }
 
-// Phase 14: RAG Integration - Query RAG for knowledge retrieval
+// Phase 14: RAG Integration - Backend/Ollama only; no hardcoded fallback
+const RAG_ENGINE_URL = USE_UNIFIED_ENGINE
+  ? `${UNIFIED_ENGINE_URL}/v1`
+  : null;
+
 export async function queryRAG(intent, country) {
   try {
-    // Quick health check - verify Ollama is accessible
+    // Prefer backend RAG (Ollama on server) when unified engine is used
+    if (USE_UNIFIED_ENGINE && RAG_ENGINE_URL) {
+      const res = await fetch(`${RAG_ENGINE_URL}/rag/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent_type: intent.type || "UNKNOWN",
+          intentType: intent.type || "UNKNOWN",
+          extracted_entities: intent.extractedInfo || intent.payload || {},
+          extractedEntities: intent.extractedInfo || intent.payload || {},
+          extractedInfo: intent.extractedInfo || {},
+          country: country || "IN",
+          context: { lifecycle_state: intent.lifecycleState },
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!res.ok) {
+        console.warn("[RAG] Backend RAG unavailable (non-blocking):", res.status);
+        return null;
+      }
+      return res.json();
+    }
+
+    // Non-unified: try frontend Ollama only (no hardcoded fallback)
+    if (isProduction || !OLLAMA_BASE_URL) {
+      return null;
+    }
     try {
       const healthCheck = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
         method: "GET",
-        signal: AbortSignal.timeout(5000), // 5 second timeout for health check
+        signal: AbortSignal.timeout(5000),
       });
-      if (!healthCheck.ok) {
-        console.warn("[RAG Integration] Ollama health check failed - skipping RAG query");
-        return null;
-      }
-    } catch (healthErr) {
-      console.warn("[RAG Integration] Ollama not accessible - skipping RAG query:", healthErr.message);
+      if (!healthCheck.ok) return null;
+    } catch {
       return null;
     }
 
-    // Import RAG factory dynamically to avoid issues if RAG files have errors
     const { getRAGFactory } = await import("../rag/rag-factory");
-    
     const ragFactory = getRAGFactory({
       baseUrl: OLLAMA_BASE_URL,
       model: import.meta.env.VITE_OLLAMA_MODEL || "llama3",
-      timeout: 60000, // 60 seconds - first model load can be slow
+      timeout: 60000,
     });
-
     const ragQuery = {
       intent_type: intent.type || "UNKNOWN",
       extracted_entities: intent.extractedInfo || intent.payload || {},
-      country: country || "IN", // Default to India
-      context: {
-        lifecycle_state: intent.lifecycleState,
-      },
+      country: country || "IN",
+      context: { lifecycle_state: intent.lifecycleState },
     };
-
-    const ragResponse = await ragFactory.query(ragQuery);
-    return ragResponse;
+    return await ragFactory.query(ragQuery);
   } catch (error) {
     console.warn("[RAG Integration] RAG query failed (non-blocking):", error);
-    // Return null instead of throwing - RAG is advisory, shouldn't break flow
     return null;
   }
 }
@@ -556,4 +685,6 @@ export function determineCountry(intent) {
   // Default to India (since current demo is India-focused)
   return "IN";
 }
+
+// No hardcoded RAG fallback - all RAG via backend/Ollama or frontend Ollama; on failure return null
 

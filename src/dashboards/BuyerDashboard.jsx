@@ -1,4 +1,3 @@
-import DashboardLayout from "../layout/DashboardLayout";
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { checkResume } from "../api/intentApi";
@@ -64,17 +63,14 @@ export default function BuyerDashboard() {
 
   if (loading) {
     return (
-      <DashboardLayout>
-        <div style={{ padding: 40, textAlign: "center", color: "#A0A0A0" }}>
-          Loading...
-        </div>
-      </DashboardLayout>
+      <div style={{ padding: 40, textAlign: "center", color: "#A0A0A0" }}>
+        Loading...
+      </div>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
         {/* 1️⃣ Active Intent (PRIMARY) */}
         {activeIntent ? (
           <div
@@ -344,7 +340,6 @@ export default function BuyerDashboard() {
             </div>
           </div>
         </details>
-      </div>
-    </DashboardLayout>
+    </div>
   );
 }

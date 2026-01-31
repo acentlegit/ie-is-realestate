@@ -93,10 +93,10 @@ export function getAvailableSessions() {
     );
   }
 
-  // Buyer: Access to Buyer, Agent (for communication), Property
+  // Buyer: Buyer and Property only (no Agent session card – agent flow is separate when logged in as agent)
   if (role === "buyer") {
     return allSessions.filter(s => 
-      ["buyer", "agent", "property"].includes(s.key)
+      ["buyer", "property"].includes(s.key)
     );
   }
 

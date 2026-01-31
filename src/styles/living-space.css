@@ -1,94 +1,102 @@
+/* Professional Real Estate theme – cohesive, clean */
 :root{
-  --bg:#071021;
-  --card:rgba(255,255,255,.05);
-  --stroke:rgba(255,255,255,.08);
-  --text:rgba(255,255,255,.92);
-  --muted:rgba(255,255,255,.68);
-  --good:#22c55e;
-  --warn:#f59e0b;
-  --bad:#ef4444;
-  --cool:#3b82f6;
-  --purple:#a855f7;
+  --bg:#F5F7FA;
+  --card:#FFFFFF;
+  --stroke:#E2E8F0;
+  --text:#1E293B;
+  --muted:#64748B;
+  --accent:#475569;
+  --good:#0F766E;
+  --warn:#B45309;
+  --bad:#B91C1C;
+  --cool:#1E40AF;
+  --primary:#1E40AF;
+  --bg-soft:#E2E8F0;
+  /* Muted, professional tints */
+  --good-soft:rgba(15,118,110,0.1);
+  --warn-soft:rgba(180,83,9,0.1);
+  --bad-soft:rgba(185,28,28,0.08);
+  --cool-soft:rgba(30,64,175,0.08);
+  --neutral-soft:rgba(100,116,139,0.06);
+  --bar-track:var(--stroke);
+  --cool-hover:#1D4ED8;
 }
 *{box-sizing:border-box}
 body{
   margin:0 !important;
   color:var(--text) !important;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial !important;
-  background:
-    radial-gradient(900px 600px at 10% -5%, rgba(34,197,94,.14), transparent 55%),
-    radial-gradient(900px 600px at 110% 0%, rgba(59,130,246,.18), transparent 55%),
-    radial-gradient(700px 500px at 50% 120%, rgba(168,85,247,.14), transparent 55%),
-    linear-gradient(180deg, #030614 0%, var(--bg) 100%) !important;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial !important;
+  background: var(--bg) !important;
   min-height:100vh !important;
 }
 .container{max-width:1500px;margin:0 auto;padding:20px}
 .topbar{
   display:flex;justify-content:space-between;align-items:center;gap:14px;
   padding:16px;border-radius:18px;background:var(--card);
-  border:1px solid var(--stroke);backdrop-filter: blur(10px);
+  border:1px solid var(--stroke);
 }
-.h1{font-size:18px;font-weight:950}
+.h1{font-size:18px;font-weight:950;color:var(--text)}
 .sub{font-size:12px;color:var(--muted)}
-.grid{display:grid;grid-template-columns:360px 1fr 380px;gap:14px;margin-top:14px}
+.grid{display:grid;grid-template-columns:360px 1fr minmax(400px,440px);gap:14px;margin-top:14px}
 .card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:14px}
-.title{font-weight:950;margin-bottom:8px}
+.title{font-weight:950;margin-bottom:8px;color:var(--text)}
 .small{font-size:12px;color:var(--muted)}
 .btn{
-  cursor:pointer;border:1px solid var(--stroke);background:rgba(255,255,255,.06);
+  cursor:pointer;border:1px solid var(--stroke);background:var(--card);
   color:var(--text);padding:10px 12px;border-radius:14px;font-weight:900;font-size:12px;
 }
-.btn.primary{border:none;background:linear-gradient(135deg,#22c55e,#3b82f6)}
-.btn.cool{border:none;background:linear-gradient(135deg,#3b82f6,#a855f7)}
-.btn.purple{border:none;background:linear-gradient(135deg,#a855f7,#3b82f6)}
+.btn.primary{border:none;background:var(--cool);color:#FFF}
+.btn.primary:hover{background:var(--cool-hover);color:#FFF}
+.btn.cool{border:none;background:var(--accent);color:#FFF}
+.btn.purple{border:none;background:var(--muted);color:#FFF}
 .input{
   width:100%;padding:10px 12px;border-radius:14px;
-  background:rgba(0,0,0,.25);border:1px solid var(--stroke);color:var(--text);
+  background:var(--card);border:1px solid var(--stroke);color:var(--text);
 }
-.roomItem{padding:12px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.18);cursor:pointer;margin-top:10px}
-.roomItem.active{outline:2px solid rgba(34,197,94,.55);box-shadow:0 0 0 6px rgba(59,130,246,.14)}
-.pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--stroke);background:rgba(255,255,255,.06);font-size:12px;color:var(--muted)}
+.roomItem{padding:12px;border-radius:16px;border:1px solid var(--stroke);background:var(--card);cursor:pointer;margin-top:10px}
+.roomItem.active{outline:2px solid var(--accent);box-shadow:0 0 0 4px rgba(200,162,74,.15)}
+.pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--stroke);background:var(--bg);font-size:12px;color:var(--muted)}
 .layout{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
 .section{margin-top:12px}
 .kpis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-.kpi{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.18)}
-.kpi .v{font-weight:950;font-size:16px}
+.kpi{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:var(--card)}
+.kpi .v{font-weight:950;font-size:16px;color:var(--text)}
 .kpi .l{font-size:12px;color:var(--muted)}
 .list{display:grid;gap:8px}
-.item{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.18)}
+.item{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:var(--card)}
 .statusPass{color:var(--good);font-weight:950}
 .statusWarn{color:var(--warn);font-weight:950}
 .statusFail{color:var(--bad);font-weight:950}
-.chatBox{overflow:auto;padding:10px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.22)}
-.msg{padding:10px;border-radius:14px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);margin-bottom:8px}
-.msg b{font-size:12px}
+.chatBox{overflow:auto;padding:10px;border-radius:16px;border:1px solid var(--stroke);background:var(--card)}
+.msg{padding:10px;border-radius:14px;border:1px solid var(--stroke);background:var(--bg);margin-bottom:8px}
+.msg b{font-size:12px;color:var(--text)}
 .msg .t{font-size:12px;color:var(--muted)}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.tab{padding:8px 10px;border-radius:999px;border:1px solid var(--stroke);background:rgba(0,0,0,.18);cursor:pointer;font-size:12px;font-weight:900;color:var(--muted)}
-.tab.active{background:rgba(59,130,246,.22);color:var(--text);border-color:rgba(59,130,246,.42)}
+.tab{padding:8px 10px;border-radius:999px;border:1px solid var(--stroke);background:var(--card);cursor:pointer;font-size:12px;font-weight:900;color:var(--muted)}
+.tab.active{background:var(--cool);color:#FFF;border-color:var(--cool)}
 .palace{
   position:relative;height:260px;border-radius:16px;border:1px solid var(--stroke);
-  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(0,0,0,.22));
+  background:linear-gradient(180deg, var(--bg) 0%, var(--bg) 40%, rgba(190,205,217,0.4) 100%);
   overflow:hidden;
 }
 .anchor{
   position:absolute;transform:translate(-50%,-50%);
   padding:8px 10px;border-radius:999px;border:1px solid var(--stroke);
-  background:rgba(0,0,0,.35);font-size:12px;font-weight:900;
+  background:var(--card);font-size:12px;font-weight:900;color:var(--text);
 }
 
-/* Living Space UI classes for Intent Platform */
+/* Living Space UI classes for Intent Platform (Private Banking theme) */
 .living-space-card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:14px;margin-bottom:14px}
-.living-space-title{font-weight:950;margin-bottom:8px;font-size:16px}
+.living-space-title{font-weight:950;margin-bottom:8px;font-size:16px;color:var(--text)}
 .living-space-small{font-size:12px;color:var(--muted)}
-.living-space-pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--stroke);background:rgba(255,255,255,.06);font-size:12px;color:var(--muted)}
-.living-space-btn{cursor:pointer;border:1px solid var(--stroke);background:rgba(255,255,255,.06);color:var(--text);padding:10px 12px;border-radius:14px;font-weight:900;font-size:12px}
-.living-space-btn.primary{border:none;background:linear-gradient(135deg,#22c55e,#3b82f6)}
-.living-space-input{width:100%;padding:10px 12px;border-radius:14px;background:rgba(0,0,0,.25);border:1px solid var(--stroke);color:var(--text)}
+.living-space-pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--stroke);background:var(--bg);font-size:12px;color:var(--muted)}
+.living-space-btn{cursor:pointer;border:1px solid var(--stroke);background:var(--card);color:var(--text);padding:10px 12px;border-radius:14px;font-weight:900;font-size:12px}
+.living-space-btn.primary{border:none;background:var(--cool);color:#FFF}
+.living-space-input{width:100%;padding:10px 12px;border-radius:14px;background:var(--card);border:1px solid var(--stroke);color:var(--text)}
 .living-space-list{display:grid;gap:8px}
-.living-space-item{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.18)}
-.living-space-chatBox{height:220px;overflow:auto;padding:10px;border-radius:16px;border:1px solid var(--stroke);background:rgba(0,0,0,.22)}
-.living-space-msg{padding:10px;border-radius:14px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);margin-bottom:8px}
+.living-space-item{padding:10px;border-radius:16px;border:1px solid var(--stroke);background:var(--card)}
+.living-space-chatBox{height:220px;overflow:auto;padding:10px;border-radius:16px;border:1px solid var(--stroke);background:var(--card)}
+.living-space-msg{padding:10px;border-radius:14px;border:1px solid var(--stroke);background:var(--bg);margin-bottom:8px}
 .living-space-statusPass{color:var(--good);font-weight:950}
 .living-space-statusFail{color:var(--bad);font-weight:950}
 .living-space-layout{display:grid;gap:14px}

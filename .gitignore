@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tar.gz
+
+# Environment and secrets (do not commit)
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+
+# Logs and OS
+*.log
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Optional: uncomment if you don't want to track these
+# speech-service/venv/
+# video-service/node_modules/

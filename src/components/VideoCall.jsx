@@ -6,7 +6,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Room, createLocalTracks } from "livekit-client";
 
-const LIVEKIT_TOKEN_URL = import.meta.env.VITE_LIVEKIT_TOKEN_URL || "http://localhost:3001/token";
+// In dev, use same-origin /api/video/token so Vite proxies to token server (localhost:3001). Set VITE_LIVEKIT_TOKEN_URL for prod or custom URL.
+const LIVEKIT_TOKEN_URL = import.meta.env.VITE_LIVEKIT_TOKEN_URL || (import.meta.env.DEV ? "/api/video/token" : "http://localhost:3001/token");
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || "wss://qhire-ai-interivew-xygij6p0.livekit.cloud";
 
 export default function VideoCall({ userName, roomName = "intent-platform", onTranscript }) {
@@ -83,7 +84,18 @@ export default function VideoCall({ userName, roomName = "intent-platform", onTr
 
     } catch (error) {
       console.error("[Video Call] Failed to join room:", error);
-      alert("Failed to start video call. Please check your connection.");
+      const isUnreachable =
+        (error?.message && (
+          error.message.includes("token service") ||
+          error.message.includes("non-JSON") ||
+          error.message.includes("Failed to fetch") ||
+          error.message.includes("Load failed") ||
+          error.message.includes("NetworkError")
+        ));
+      const msg = isUnreachable
+        ? "Video token service not reachable. Start it with: cd video-service && npm start (port 3001). Or set VITE_LIVEKIT_TOKEN_URL in .env to your token URL."
+        : "Failed to start video call. " + (error?.message || "Please check your connection.");
+      alert(msg);
     }
   };
 

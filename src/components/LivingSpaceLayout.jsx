@@ -9,11 +9,25 @@
  */
 
 import React, { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import VideoCall from "./VideoCall";
 import SpeechToText from "./SpeechToText";
-import keycloak from "../auth/keycloakAuth";
+import keycloak, { logout } from "../auth/keycloakAuth";
 import { getAvailableSessions, getPrimaryRole, canAccessSession } from "../utils/roleUtils";
 import { sortDecisionsByOrder, DECISION_ORDER } from "../services/emailService";
+
+function LogoutButton() {
+  const navigate = useNavigate();
+  const handleLogout = () => {
+    logout();
+    navigate("/", { replace: true });
+  };
+  return (
+    <button type="button" className="btn" onClick={handleLogout} title="Sign out">
+      Logout
+    </button>
+  );
+}
 
 const ALL_SESSION_TYPES = [
   { key: "buyer", label: "Buyer", icon: "👤" },
@@ -22,6 +36,71 @@ const ALL_SESSION_TYPES = [
   { key: "property", label: "Property", icon: "🏠" },
   { key: "legal", label: "Legal", icon: "⚖️" },
 ];
+
+// Professional labels for technical codes (no BUY_PROPERTY, SELECT_AGENT, etc. in UI)
+function formatIntentLabel(type) {
+  if (!type) return "Intent";
+  const t = String(type).toUpperCase();
+  if (t.includes("BUY") || t === "BUY_PROPERTY") return "Purchase";
+  if (t.includes("INVEST")) return "Investment";
+  if (t.includes("VERIFY") || t.includes("VERIFICATION")) return "Verification";
+  if (t.includes("SELL")) return "Sale";
+  return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatDecisionTypeLabel(type) {
+  if (!type) return "";
+  const t = String(type).toUpperCase();
+  if (t.includes("PROPERTY") && !t.includes("SELECT_AGENT")) return "Property";
+  if (t.includes("SELECT_AGENT") || t.includes("AGENT")) return "Agent";
+  if (t.includes("LENDER") || t.includes("BANK")) return "Bank";
+  if (t.includes("DOWN_PAYMENT") || t.includes("DOWNPAYMENT")) return "Down payment";
+  return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Actions that require document upload for verification (show upload UI only for these)
+function actionRequiresDocuments(action) {
+  if (!action?.description) return false;
+  const d = String(action.description).toLowerCase();
+  return (
+    d.includes("verify") || d.includes("document") || d.includes("title") ||
+    d.includes("deed") || d.includes("loan") || d.includes("registration") ||
+    d.includes("encumbrance") || d.includes("apply for") || d.includes("legal")
+  );
+}
+
+// Decision types relevant per intent (show only these in Final Decisions). null = show all.
+// Include both UI names (SELECT_AGENT) and backend/Ollama names (AGENT_SELECTION, FINANCING_OPTION) so decisions show.
+function getDecisionTypesForIntent(intentType, routeModel) {
+  if (!intentType && routeModel !== "investor") return null; // no intent yet → show all
+  const t = String(intentType || "").toUpperCase();
+  if (t.includes("BUY") || routeModel === "buyer") return ["SELECT_PROPERTY", "SELECT_AGENT", "SELECT_LENDER", "DOWN_PAYMENT", "AGENT_SELECTION", "FINANCING_OPTION", "PROPERTY_SELECTION", "PROPERTY"];
+  if (t.includes("INVEST") || routeModel === "investor") return ["SELECT_PROPERTY", "SELECT_LENDER", "DOWN_PAYMENT", "SELECT_AGENT", "AGENT_SELECTION", "FINANCING_OPTION", "PROPERTY_SELECTION", "PROPERTY"];
+  if (t.includes("VERIFY")) return ["VERIFY", "DOCUMENT", "LEGAL", "COMPLIANCE"];
+  if (t.includes("SELL")) return ["SELECT_PROPERTY", "SELECT_AGENT", "SELECT_LENDER", "AGENT_SELECTION", "FINANCING_OPTION", "PROPERTY_SELECTION"];
+  return null;
+}
+
+// Whether an action is relevant for the given intent (by description keywords).
+// Kept broad so 4–5+ actions always show for BUY/RENT/SELL.
+function isActionRelevantForIntent(action, intentType, routeModel) {
+  if (!intentType && routeModel !== "investor") return true; // no intent → show all
+  const d = String(action?.description || "").toLowerCase();
+  const t = String(intentType || "").toUpperCase();
+  if (t.includes("BUY") || t.includes("RENT") || t === "" || routeModel === "buyer") {
+    return d.includes("agent") || d.includes("visit") || d.includes("verify") || d.includes("document") || d.includes("loan") || d.includes("contact") || d.includes("schedule") || d.includes("apply") || d.includes("property") || d.includes("title") || d.includes("deed") || d.includes("kyc") || d.includes("income") || d.includes("mou") || d.includes("sign") || d.includes("encumbrance");
+  }
+  if (t.includes("INVEST") || routeModel === "investor") {
+    return d.includes("roi") || d.includes("loan") || d.includes("property") || d.includes("yield") || d.includes("appreciation") || d.includes("agent") || d.includes("verify") || d.includes("document");
+  }
+  if (t.includes("VERIFY")) {
+    return d.includes("verify") || d.includes("document") || d.includes("title") || d.includes("deed") || d.includes("encumbrance") || d.includes("legal") || d.includes("registration");
+  }
+  if (t.includes("SELL")) {
+    return d.includes("agent") || d.includes("property") || d.includes("document") || d.includes("verify");
+  }
+  return true;
+}
 
 export default function LivingSpaceLayout({
   // Engine Data (unchanged)
@@ -36,6 +115,7 @@ export default function LivingSpaceLayout({
   // Engine Handlers (unchanged)
   onAnalyze,
   onDecisionSelect,
+  onConfirmAll, // Optional: (list of { decisionId, optionId }) => Promise – run sequentially so state updates correctly
   onActionOutcome,
   onVoiceClick,
   onDecisionChangeClick, // For changing confirmed decisions
@@ -47,6 +127,17 @@ export default function LivingSpaceLayout({
   setInput,
   loading,
   error,
+  // Sir integration (intent-ai-nextjs-v2 / preview)
+  refinementPrompt = null,
+  loanOptions = [],
+  roi = null,
+  routeModel = "buyer",
+  trustReceipt = null,
+  confidence = 0,
+  intentHistory = [],
+  onSelectFromHistory = null,
+  onDeleteFromHistory = null,
+  onStartNew = null,
 }) {
   const [activeSession, setActiveSession] = useState("buyer");
   const [chatMessages, setChatMessages] = useState([]);
@@ -55,9 +146,19 @@ export default function LivingSpaceLayout({
   const [showMap, setShowMap] = useState(false);
   const [mapCoordinates, setMapCoordinates] = useState(null);
   const [showVideoCall, setShowVideoCall] = useState(false);
+  const [journeyExpanded, setJourneyExpanded] = useState(null); // "intent"|"compliance"|"decisions"|"actions"|"history"|null – click to expand inside Your Buying Journey
+  // Upload documents for verification: { [actionId]: Array<{ id, name, size }> }
+  const [actionDocuments, setActionDocuments] = useState({});
+  const [showPreview, setShowPreview] = useState(false); // Preview: summary of current session (intent, decisions, actions, RAG, explainability)
 
-  // Role-based access: Get available sessions based on user role
-  const availableSessions = useMemo(() => getAvailableSessions(), []);
+  // Role-based access: Get available sessions; append History for previous intent searches
+  const availableSessions = useMemo(() => {
+    const base = getAvailableSessions();
+    if (!base.some(s => s.key === "history")) {
+      return [...base, { key: "history", label: "History", icon: "📋" }];
+    }
+    return base;
+  }, []);
   const userRole = useMemo(() => getPrimaryRole(), []);
   
   // Set default active session based on role
@@ -135,14 +236,15 @@ export default function LivingSpaceLayout({
       const result = confidence ? `${confidence} ${name}` : name;
       return experience ? `${result} (${experience})` : result;
     } else if (decisionType.includes("PROPERTY")) {
-      // Format: 3BHK, 45Lakhs, MVP Colony
+      // Format: 2BHK/1BHK, price, location – full detail
       const parts = [];
-      if (option.type) parts.push(option.type); // e.g., "3BHK"
-      if (option.price) parts.push(`₹${(option.price / 100000).toFixed(0)}Lakhs`);
+      if (option.type) parts.push(option.type); // e.g., "2BHK", "1BHK", "3BHK"
+      if (option.bedrooms) parts.push(`${option.bedrooms} BHK`);
+      if (option.price) parts.push(`₹${(option.price / 100000).toFixed(0)}L`);
       if (option.location || option.address) parts.push(option.location || option.address);
-      return parts.join(", ") || option.label || "N/A";
-    } else if (decisionType.includes("LENDER") || decisionType.includes("BANK")) {
-      // Format: (bank name, interest rate, LTV, loan upto)
+      return parts.length ? parts.join(", ") : (option.label || "N/A");
+    } else if (decisionType.includes("FINANCING") || decisionType.includes("LENDER") || decisionType.includes("BANK")) {
+      // Format: bank name, interest rate, LTV, loan upto
       const parts = [];
       if (option.name || option.label) parts.push(option.name || option.label);
       if (option.interestRate) parts.push(`Interest: ${option.interestRate}%`);
@@ -174,7 +276,7 @@ export default function LivingSpaceLayout({
                                  d.options?.find(opt => opt.recommended === true) ||
                                  d.options?.[0];
       const selectedOption = d.selectedOptionId ? d.options?.find(opt => opt.id === d.selectedOptionId) : null;
-      const isConfirmed = d.evolutionState === "CONFIRMED";
+      const isConfirmed = d.evolutionState === "CONFIRMED" || d.evolutionState === "SELECTED";
       const optionToShow = isConfirmed ? selectedOption : recommendedOption;
       
       // Format details - for confirmed decisions, use selected option with confidence
@@ -210,6 +312,16 @@ export default function LivingSpaceLayout({
       return orderA - orderB;
     });
   }, [decisions]);
+
+  // Show only decisions relevant to the user's intent (result.type / routeModel)
+  const intentFilteredDecisions = useMemo(() => {
+    const allowed = getDecisionTypesForIntent(result?.type, routeModel);
+    if (!allowed || allowed.length === 0) return allDecisions;
+    return allDecisions.filter(d => {
+      const dt = (d.originalDecision?.type || "").toUpperCase();
+      return allowed.some(a => dt.includes(a) || a.includes(dt));
+    });
+  }, [allDecisions, result?.type, routeModel]);
 
   // Deduplicate actions by actionId and sort by order to prevent duplicates
   // Also filter out completed/confirmed actions that shouldn't be shown again
@@ -266,6 +378,11 @@ export default function LivingSpaceLayout({
       });
   }, [actions]);
 
+  // Show only actions relevant to the user's intent (result.type / routeModel)
+  const intentFilteredActions = useMemo(() => {
+    return uniqueActions.filter(a => isActionRelevantForIntent(a, result?.type, routeModel));
+  }, [uniqueActions, result?.type, routeModel]);
+
   return (
     <div className="container">
       <div className="topbar">
@@ -274,146 +391,279 @@ export default function LivingSpaceLayout({
           <div className="sub">Living Space UI · All Engines Connected · Email Automation</div>
         </div>
         <div style={{display:"flex", gap:10, alignItems:"center"}}>
+          {result && onStartNew && (
+            <button type="button" className="btn primary" onClick={onStartNew} disabled={loading} style={{ fontSize: 12 }}>
+              Start new
+            </button>
+          )}
           <button className="btn" onClick={()=>window.location.reload()}>Refresh</button>
+          <button className="btn" onClick={()=>setShowPreview(true)} title="Summary of this session (intent, decisions, actions)">Preview</button>
           <span className="pill">Status: <b>{loading ? "Processing" : result ? "Active" : "Ready"}</b></span>
+          <LogoutButton />
         </div>
       </div>
 
+      {/* Preview modal: summary of current session (intent, decisions, actions, RAG, explainability) in one screen */}
+      {showPreview && (
+        <div
+          role="dialog"
+          aria-label="Session preview"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+          onClick={() => setShowPreview(false)}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: 560,
+              maxHeight: "90vh",
+              overflowY: "auto",
+              padding: 20,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "1px solid var(--stroke)", paddingBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 18 }}>Session Preview</h3>
+              <button type="button" className="btn" onClick={() => setShowPreview(false)}>Close</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {(() => {
+                const latest = result || (intentHistory?.length > 0 ? intentHistory[0] : null);
+                const previewIntent = latest?.intent || latest;
+                const previewCompliance = latest?.compliance ?? compliance;
+                const previewDecisions = latest?.decisions ?? decisions;
+                const previewActions = latest?.actions ?? actions;
+                const previewRag = latest?.ragResponse ?? ragResponse;
+                if (!previewIntent) return <p className="small" style={{ opacity: 0.8 }}>No intent yet. Run a search to see the latest here and in history.</p>;
+                return (
+                <>
+                  <section>
+                    <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Latest intent</div>
+                    <div style={{ fontSize: 13 }}>{formatIntentLabel(previewIntent.type)} · {previewIntent.text || (previewIntent.payload?.location && `Location: ${previewIntent.payload.location}`) || "—"}</div>
+                    {previewIntent.payload?.location && <div className="small" style={{ marginTop: 4 }}>Location: {previewIntent.payload.location}</div>}
+                    {previewIntent.payload?.budget && <div className="small" style={{ marginTop: 2 }}>Budget: ₹{(previewIntent.payload.budget / 100000).toFixed(0)}L</div>}
+                    {previewIntent.confidence != null && <div className="small" style={{ marginTop: 2, opacity: 0.8 }}>Confidence: {(previewIntent.confidence * 100).toFixed(0)}%</div>}
+                    {latest?.createdAt && <div className="small" style={{ marginTop: 2, opacity: 0.7 }}>Saved: {new Date(latest.createdAt).toLocaleString()}</div>}
+                  </section>
+                  {previewCompliance && (
+                    <section>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Compliance</div>
+                      <div style={{ fontSize: 13 }}>{previewCompliance.decision || previewCompliance.status || "—"} {previewCompliance.reason && `· ${previewCompliance.reason}`}</div>
+                    </section>
+                  )}
+                  {previewDecisions?.length > 0 && (
+                    <section>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Decisions</div>
+                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+                        {previewDecisions.map((d, i) => {
+                          const opt = d.options?.find(o => o.id === d.selectedOptionId);
+                          return (
+                            <li key={d.decisionId || i} style={{ marginBottom: 4 }}>
+                              {formatDecisionTypeLabel(d.type) || d.type}: <strong>{opt?.label || opt?.name || (d.selectedOptionId ? "Selected" : "—")}</strong>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  )}
+                  {previewActions?.length > 0 && (
+                    <section>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Actions</div>
+                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
+                        {previewActions.slice(0, 10).map((a, i) => (
+                          <li key={a.actionId || i} style={{ marginBottom: 4 }}>{a.description || a.label || "—"}</li>
+                        ))}
+                        {previewActions.length > 10 && <li className="small" style={{ opacity: 0.8 }}>+{previewActions.length - 10} more</li>}
+                      </ul>
+                    </section>
+                  )}
+                  {previewRag?.summary && (
+                    <section>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Knowledge / RAG</div>
+                      <div style={{ fontSize: 12, opacity: 0.95 }}>{previewRag.summary.substring(0, 300)}{previewRag.summary.length > 300 ? "…" : ""}</div>
+                    </section>
+                  )}
+                  {result && explainabilityResult?.summary && (
+                    <section>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 6, color: "var(--cool)" }}>Explainability</div>
+                      <div style={{ fontSize: 12, opacity: 0.95 }}>{explainabilityResult.summary.substring(0, 300)}{explainabilityResult.summary.length > 300 ? "…" : ""}</div>
+                    </section>
+                  )}
+                </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid" style={{height:"calc(100vh - 140px)", maxHeight:"900px"}}>
-        {/* LEFT: Sessions */}
-        <div className="card" style={{overflowY:"auto", overflowX:"hidden"}}>
-          <div className="title" style={{fontSize:result ? 13 : 16}}>Sessions</div>
-          <div className="small" style={{fontSize:result ? 10 : 12}}>Switch between different session types</div>
-          
-          {/* Role Badge */}
-          <div style={{marginTop:8, marginBottom:8, padding:"6px 10px", background:"rgba(59,130,246,0.2)", borderRadius:6, fontSize:11}}>
-            <b>Role:</b> {userRole.toUpperCase()}
+        {/* LEFT: Sessions – simple and readable (not cramped) */}
+        <div className="card" style={{overflowY:"auto", overflowX:"hidden", padding:12}}>
+          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+            <div className="title" style={{fontSize:14}}>Sessions</div>
+            <span className="pill" style={{fontSize:10, background:"var(--cool-soft)", color:"var(--cool)"}}>{userRole}</span>
           </div>
 
-          {/* Participants List - Show active users by role */}
+          {/* Participants – compact but readable */}
           {result && (
-            <div style={{marginTop:12, marginBottom:12, paddingTop:12, borderTop:"1px solid var(--stroke)"}}>
-              <div className="title" style={{fontSize:12, marginBottom:8}}>Participants</div>
-              <div className="small" style={{fontSize:10, marginBottom:6}}>Active users in this intent</div>
+            <div style={{marginBottom:10, paddingBottom:10, borderBottom:"1px solid var(--stroke)"}}>
+              <div className="small" style={{fontSize:11, fontWeight:600, marginBottom:6}}>Participants</div>
               <div style={{display:"flex", flexDirection:"column", gap:6}}>
-                {/* Buyer - Always present */}
-                <div style={{display:"flex", alignItems:"center", gap:6, padding:"6px 8px", background:"rgba(0,0,0,0.1)", borderRadius:6}}>
-                  <span style={{fontSize:14}}>👤</span>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:11, fontWeight:"bold"}}>Buyer</div>
-                    <div className="small" style={{fontSize:9, opacity:0.7}}>
-                      {keycloak.tokenParsed?.name || keycloak.tokenParsed?.preferred_username || "You"}
-                    </div>
-                  </div>
-                  <span className="pill" style={{fontSize:9, background:"rgba(34,197,94,0.2)", color:"var(--good)"}}>ONLINE</span>
+                <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:12, padding:"4px 0"}}>
+                  <span>👤 {keycloak.tokenParsed?.name || keycloak.tokenParsed?.preferred_username || "You"}</span>
+                  <span className="pill" style={{fontSize:9, background:"var(--good-soft)", color:"var(--good)"}}>ONLINE</span>
                 </div>
-                
-                {/* Agent - If agent decision is confirmed */}
-                {decisions.some(d => d.type === "SELECT_AGENT" && d.evolutionState === "CONFIRMED") && (
-                  <div style={{display:"flex", alignItems:"center", gap:6, padding:"6px 8px", background:"rgba(0,0,0,0.1)", borderRadius:6}}>
-                    <span style={{fontSize:14}}>🏢</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:11, fontWeight:"bold"}}>Agent</div>
-                      <div className="small" style={{fontSize:9, opacity:0.7}}>
-                        {(() => {
-                          const agentDecision = decisions.find(d => d.type === "SELECT_AGENT" && d.evolutionState === "CONFIRMED");
-                          const agentOption = agentDecision?.options?.find(opt => opt.id === agentDecision.selectedOptionId);
-                          return agentOption?.label || agentOption?.name || "Selected Agent";
-                        })()}
-                      </div>
+                {decisions.some(d => d.type === "SELECT_AGENT" && d.evolutionState === "CONFIRMED") && (() => {
+                  const agentDecision = decisions.find(d => d.type === "SELECT_AGENT" && d.evolutionState === "CONFIRMED");
+                  const agentOption = agentDecision?.options?.find(opt => opt.id === agentDecision.selectedOptionId);
+                  return (
+                    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:12, padding:"4px 0"}}>
+                      <span>🏢 {agentOption?.label || agentOption?.name || "Agent"}</span>
+                      <span className="pill" style={{fontSize:9, background:"var(--warn-soft)", color:"var(--warn)"}}>PENDING</span>
                     </div>
-                    <span className="pill" style={{fontSize:9, background:"rgba(251,191,36,0.2)", color:"var(--warn)"}}>PENDING</span>
-                  </div>
-                )}
-                
-                {/* Lender/Bank - If lender decision is confirmed */}
-                {decisions.some(d => d.type === "SELECT_LENDER" && d.evolutionState === "CONFIRMED") && (
-                  <div style={{display:"flex", alignItems:"center", gap:6, padding:"6px 8px", background:"rgba(0,0,0,0.1)", borderRadius:6}}>
-                    <span style={{fontSize:14}}>💰</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:11, fontWeight:"bold"}}>Lender</div>
-                      <div className="small" style={{fontSize:9, opacity:0.7}}>
-                        {(() => {
-                          const lenderDecision = decisions.find(d => d.type === "SELECT_LENDER" && d.evolutionState === "CONFIRMED");
-                          const lenderOption = lenderDecision?.options?.find(opt => opt.id === lenderDecision.selectedOptionId);
-                          return lenderOption?.label || lenderOption?.name || "Selected Bank";
-                        })()}
-                      </div>
+                  );
+                })()}
+                {decisions.some(d => d.type === "SELECT_LENDER" && d.evolutionState === "CONFIRMED") && (() => {
+                  const lenderDecision = decisions.find(d => d.type === "SELECT_LENDER" && d.evolutionState === "CONFIRMED");
+                  const lenderOption = lenderDecision?.options?.find(opt => opt.id === lenderDecision.selectedOptionId);
+                  return (
+                    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:12, padding:"4px 0"}}>
+                      <span>💰 {lenderOption?.label || lenderOption?.name || "Bank"}</span>
+                      <span className="pill" style={{fontSize:9, background:"var(--warn-soft)", color:"var(--warn)"}}>PENDING</span>
                     </div>
-                    <span className="pill" style={{fontSize:9, background:"rgba(251,191,36,0.2)", color:"var(--warn)"}}>PENDING</span>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             </div>
           )}
 
-          {/* Session List - Filtered by Role */}
-          <div style={{marginTop:result ? 8 : 12}}>
+          {/* Session tabs – icon, label, short sub-line */}
+          <div style={{display:"flex", flexDirection:"column", gap:6}}>
             {availableSessions.map(session => (
               <div
                 key={session.key}
-                className={`roomItem ${activeSession === session.key ? "active" : ""}`}
                 onClick={() => setActiveSession(session.key)}
-                style={{cursor:"pointer", padding:result ? "8px" : undefined}}
+                style={{
+                  cursor:"pointer",
+                  padding:8,
+                  borderRadius:8,
+                  background: activeSession === session.key ? "var(--cool-soft)" : "var(--neutral-soft)",
+                  border: activeSession === session.key ? "1px solid var(--cool)" : "1px solid var(--stroke)",
+                  fontSize:12
+                }}
               >
-                <div style={{display:"flex", justifyContent:"space-between", gap:10}}>
-                  <div style={{fontWeight:950, display:"flex", alignItems:"center", gap:8, fontSize:result ? 12 : undefined}}>
-                    <span>{session.icon}</span>
-                    <span>{session.label}</span>
-                  </div>
-                  {activeSession === session.key && (
-                    <span className="pill" style={{fontSize:result ? 9 : undefined}}>ACTIVE</span>
-                  )}
+                <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+                  <span>{session.icon} {session.label}</span>
+                  {activeSession === session.key && <span className="pill" style={{fontSize:9}}>Active</span>}
                 </div>
-                <div className="small" style={{marginTop:result ? 4 : 6, fontSize:result ? 10 : undefined}}>
-                  {session.key === "buyer" && "Your property search session"}
-                  {session.key === "agent" && "Agent communication & coordination"}
-                  {session.key === "lender" && "Loan & financing details"}
-                  {session.key === "property" && "Property details & documents"}
-                  {session.key === "legal" && "Legal compliance & verification"}
+                <div className="small" style={{fontSize:10, opacity:0.8, marginTop:2}}>
+                  {session.key === "buyer" && "Your search"}
+                  {session.key === "agent" && "Agent"}
+                  {session.key === "lender" && "Loan"}
+                  {session.key === "property" && "Property"}
+                  {session.key === "legal" && "Legal"}
+                  {session.key === "history" && "Previous intent searches"}
                 </div>
               </div>
             ))}
           </div>
 
-          {/* AI Concierge - Moved to Left Panel */}
+          {/* History session: list of previous intents – click to restore and change */}
+          {activeSession === "history" && (
+            <div style={{marginTop:12, paddingTop:12, borderTop:"1px solid var(--stroke)"}}>
+              <div className="small" style={{fontSize:12, fontWeight:600, marginBottom:8, color:"var(--text)"}}>Previous intent searches</div>
+              <div style={{display:"flex", flexDirection:"column", gap:6, maxHeight:320, overflowY:"auto"}}>
+                {intentHistory.length === 0 ? (
+                  <div className="small" style={{opacity:0.7, padding:8}}>No history yet. Run a search, then click <strong>Start new</strong> in the top bar to save the current session here.</div>
+                ) : (
+                  intentHistory.map((entry, idx) => {
+                    const i = entry?.intent;
+                    if (!i) return null;
+                    const label = formatIntentLabel(i.type);
+                    const loc = i.payload?.location || "—";
+                    const budget = i.payload?.budget ? "₹" + (i.payload.budget / 100000).toFixed(0) + "L" : "";
+                    const date = entry.createdAt ? new Date(entry.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+                    return (
+                      <div
+                        key={entry.createdAt + "-" + (i.id || idx)}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (onSelectFromHistory) onSelectFromHistory(entry);
+                          setActiveSession("buyer");
+                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { if (onSelectFromHistory) onSelectFromHistory(entry); setActiveSession("buyer"); } }}
+                        style={{
+                          padding:10,
+                          borderRadius:8,
+                          border:"1px solid var(--stroke)",
+                          background:"var(--card)",
+                          cursor:"pointer",
+                          fontSize:11,
+                          transition: "border-color 0.15s, background 0.15s",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: 8,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--cool)"; e.currentTarget.style.background = "var(--cool-soft)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--stroke)"; e.currentTarget.style.background = "var(--card)"; }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{fontWeight:600, color:"var(--text)"}}>{label} · {loc} {budget ? "· " + budget : ""}</div>
+                          {date && <div className="small" style={{marginTop:4, opacity:0.8}}>{date}</div>}
+                          <div className="small" style={{marginTop:4, opacity:0.85}}>Click to restore and change</div>
+                        </div>
+                        {onDeleteFromHistory && (
+                          <button
+                            type="button"
+                            className="btn"
+                            title="Delete from history"
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); onDeleteFromHistory(entry); }}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); onDeleteFromHistory(entry); } }}
+                            style={{ flexShrink: 0, padding: "4px 8px", fontSize: 11 }}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* AI Concierge – simple cards, readable text (no heavy truncation) */}
           {result && (
-            <div style={{marginTop:20, paddingTop:20, borderTop:"1px solid var(--stroke)"}}>
-              <div className="title" style={{fontSize:14, marginBottom:8}}>AI Concierge</div>
-              <div style={{display:"grid", gap:8}}>
-                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"rgba(0,0,0,0.18)"}}>
-                  <b style={{fontSize:11}}>📋 Intent</b>
-                  <div className="small" style={{marginTop:4, fontSize:10}}>
-                    <b>Type:</b> {result.type || "N/A"}
-                  </div>
-                  {result.payload?.location && (
-                    <div className="small" style={{fontSize:10}}>
-                      <b>Location:</b> {result.payload.location}
-                    </div>
-                  )}
-                  {result.payload?.budget && (
-                    <div className="small" style={{fontSize:10}}>
-                      <b>Budget:</b> ₹{(result.payload.budget / 100000).toFixed(0)}L
-                    </div>
-                  )}
+            <div style={{marginTop:14, paddingTop:12, borderTop:"1px solid var(--stroke)"}}>
+              <div className="small" style={{fontSize:12, fontWeight:600, marginBottom:8}}>AI Concierge</div>
+              <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"var(--neutral-soft)"}}>
+                  <b style={{fontSize:11}}>Intent</b>
+                  <div style={{fontSize:12, marginTop:4, lineHeight:1.4}}>{formatIntentLabel(result.type)} · {result.payload?.location || "—"} · {result.payload?.budget ? "₹" + (result.payload.budget / 100000).toFixed(0) + "L" : "—"}</div>
                 </div>
-                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"rgba(0,0,0,0.18)"}}>
-                  <b style={{fontSize:11}}>📝 Notes</b>
-                  <div className="small" style={{marginTop:4, fontSize:10}}>
-                    {result?.payload?.originalText || "Analysis notes..."}
-                  </div>
+                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"var(--neutral-soft)"}}>
+                  <b style={{fontSize:11}}>Notes</b>
+                  <div style={{fontSize:12, marginTop:4, lineHeight:1.4}}>{result?.payload?.originalText || "—"}</div>
                 </div>
-                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"rgba(0,0,0,0.18)"}}>
-                  <b style={{fontSize:11}}>💡 Hint</b>
-                  <div className="small" style={{marginTop:4, fontSize:10}}>
-                    {actions.length > 0 ? actions[0].guidance || "Follow actions below" : "Complete compliance check"}
-                  </div>
+                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"var(--neutral-soft)"}}>
+                  <b style={{fontSize:11}}>Hint</b>
+                  <div style={{fontSize:12, marginTop:4, lineHeight:1.4}}>{actions.length > 0 ? actions[0].guidance || "Follow actions below" : "Complete compliance check"}</div>
                 </div>
-                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"rgba(0,0,0,0.18)"}}>
-                  <b style={{fontSize:11}}>➡️ Next</b>
-                  <div className="small" style={{marginTop:4, fontSize:10}}>
-                    {actions.length > 0 ? actions[0].description : "Complete decisions"}
-                  </div>
+                <div style={{padding:8, borderRadius:8, border:"1px solid var(--stroke)", background:"var(--neutral-soft)"}}>
+                  <b style={{fontSize:11}}>Next</b>
+                  <div style={{fontSize:12, marginTop:4, lineHeight:1.4}}>{actions.length > 0 ? actions[0].description : "Complete decisions"}</div>
                 </div>
               </div>
             </div>
@@ -426,14 +676,14 @@ export default function LivingSpaceLayout({
             <div>
               <div className="title">{activeSessionData?.label} Session</div>
               <div className="small">
-                {result ? `${result.type || "Intent"} · ${result.payload?.location || "Location"}` : "No active intent"}
+                {result ? `${formatIntentLabel(result.type)} · ${result.payload?.location || "Location"}` : "No active intent"}
               </div>
             </div>
             <span className="pill">Session: <b>{activeSessionData?.label}</b></span>
           </div>
 
-          {/* Modern Chat Interface */}
-          <div style={{display:"flex", flexDirection:"column", flex:1, overflow:"hidden", background:"rgba(0,0,0,0.2)", borderRadius:12, border:"1px solid var(--stroke)"}}>
+          {/* Modern Chat Interface – clean white/panel background */}
+          <div style={{display:"flex", flexDirection:"column", flex:1, overflow:"hidden", background:"var(--card)", borderRadius:12, border:"1px solid var(--stroke)"}}>
             {/* Chat Messages Area */}
             <div style={{flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12}}>
               {/* Loading State */}
@@ -452,6 +702,72 @@ export default function LivingSpaceLayout({
                 </div>
               )}
 
+              {/* Combined stream: Sir “What are you trying to do?” at top when buyer */}
+              {!loading && activeSession === "buyer" && (
+                <div style={{ padding: "12px 0", borderBottom: "1px solid var(--stroke)", marginBottom: 12 }}>
+                  <div className="small" style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
+                    What are you trying to do today?
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setInput((p) => (p ? p : "I want to buy a home"))}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 10,
+                        fontSize: 12,
+                        background: result?.type === "BUY_PROPERTY" ? "rgba(200,162,74,0.15)" : "var(--card)",
+                        border: result?.type === "BUY_PROPERTY" ? "1px solid var(--accent)" : "1px solid var(--stroke)",
+                      }}
+                    >
+                      Buy a Home
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setInput("I want to invest in property with rental yield")}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 10,
+                        fontSize: 12,
+                        background: routeModel === "investor" ? "rgba(0,49,82,0.1)" : "var(--card)",
+                        border: routeModel === "investor" ? "1px solid var(--cool)" : "1px solid var(--stroke)",
+                      }}
+                    >
+                      Invest in Property
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setInput("I want to verify property / documents")}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 10,
+                        fontSize: 12,
+                        background: "var(--neutral-soft)",
+                        border: "1px solid var(--stroke)",
+                      }}
+                    >
+                      Verify Property / Documents
+                    </button>
+                  </div>
+                  {refinementPrompt && (
+                    <div style={{
+                      marginTop: 10,
+                      padding: 10,
+                      borderRadius: 8,
+                      background: "var(--warn-soft)",
+                      border: "1px solid var(--warn)",
+                      fontSize: 12,
+                      color: "var(--text)",
+                    }}>
+                      💡 AI: {refinementPrompt}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Empty State - Show Knowledge Insights Even Before Intent (Same as After Intent) */}
               {!loading && chatMessages.length === 0 && !result && (
                 <>
@@ -467,8 +783,8 @@ export default function LivingSpaceLayout({
                       <div style={{
                         padding:14,
                         borderRadius:16,
-                        background:"rgba(139,92,246,0.15)",
-                        border:"1px solid rgba(139,92,246,0.3)",
+                        background:"var(--cool-soft)",
+                        border:"1px solid var(--stroke)",
                         color:"var(--text)"
                       }}>
                         <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:10}}>
@@ -476,7 +792,7 @@ export default function LivingSpaceLayout({
                             width:32,
                             height:32,
                             borderRadius:"50%",
-                            background:"rgba(139,92,246,0.3)",
+                            background:"var(--cool-soft)",
                             display:"flex",
                             alignItems:"center",
                             justifyContent:"center",
@@ -493,7 +809,7 @@ export default function LivingSpaceLayout({
                           </div>
                         )}
                         {ragResponse.market_context && (
-                          <div style={{marginTop:10, padding:10, background:"rgba(59,130,246,0.1)", borderRadius:8, fontSize:12}}>
+                          <div style={{marginTop:10, padding:10, background:"var(--cool-soft)", borderRadius:8, fontSize:12}}>
                             {ragResponse.market_context.location_insights && (
                               <div style={{marginBottom:6}}><strong>Location:</strong> {ragResponse.market_context.location_insights}</div>
                             )}
@@ -573,7 +889,7 @@ export default function LivingSpaceLayout({
                         </div>
                         <div style={{fontSize:13, lineHeight:1.6}}>
                           {explainabilityResult.legalReferences.slice(0, 3).map((ref, idx) => (
-                            <div key={idx} style={{marginBottom:8, padding:8, background:"rgba(0,0,0,0.2)", borderRadius:6}}>
+                            <div key={idx} style={{marginBottom:8, padding:8, background:"var(--neutral-soft)", borderRadius:6}}>
                               <div style={{fontWeight:600, marginBottom:4}}>
                                 {typeof ref === "string" ? ref : ref.title || ref.reference || "Legal Reference"}
                               </div>
@@ -638,7 +954,7 @@ export default function LivingSpaceLayout({
                     </div>
                   </div>
                   <div style={{marginTop:8, fontSize:13}}>
-                    Intent processed: <b>{result.type || "N/A"}</b>
+                    Intent: <b>{formatIntentLabel(result.type)}</b>
                   </div>
                   {compliance && (
                     <div style={{
@@ -676,7 +992,7 @@ export default function LivingSpaceLayout({
                         width:32,
                         height:32,
                         borderRadius:"50%",
-                        background:"rgba(139,92,246,0.3)",
+                        background:"var(--cool-soft)",
                         display:"flex",
                         alignItems:"center",
                         justifyContent:"center",
@@ -693,7 +1009,7 @@ export default function LivingSpaceLayout({
                       </div>
                     )}
                     {ragResponse.market_context && (
-                      <div style={{marginTop:10, padding:10, background:"rgba(59,130,246,0.1)", borderRadius:8, fontSize:12}}>
+                      <div style={{marginTop:10, padding:10, background:"var(--cool-soft)", borderRadius:8, fontSize:12}}>
                         {ragResponse.market_context.location_insights && (
                           <div style={{marginBottom:6}}><strong>Location:</strong> {ragResponse.market_context.location_insights}</div>
                         )}
@@ -773,7 +1089,7 @@ export default function LivingSpaceLayout({
                     </div>
                     <div style={{fontSize:13, lineHeight:1.6}}>
                       {explainabilityResult.legalReferences.slice(0, 3).map((ref, idx) => (
-                        <div key={idx} style={{marginBottom:8, padding:8, background:"rgba(0,0,0,0.2)", borderRadius:6}}>
+                        <div key={idx} style={{marginBottom:8, padding:8, background:"var(--neutral-soft)", borderRadius:6}}>
                           <div style={{fontWeight:600, marginBottom:4}}>
                             {typeof ref === "string" ? ref : ref.title || ref.reference || "Legal Reference"}
                           </div>
@@ -808,7 +1124,7 @@ export default function LivingSpaceLayout({
                     if (type?.includes("intent")) return "rgba(251,191,36,0.15)";
                     if (type?.includes("rag_insights")) return "rgba(139,92,246,0.15)";
                     if (type?.includes("legal_references")) return "rgba(59,130,246,0.15)";
-                    return "rgba(255,255,255,0.08)";
+                    return "var(--neutral-soft)";
                   };
                   
                   const getSystemBorder = (type) => {
@@ -858,7 +1174,7 @@ export default function LivingSpaceLayout({
                       borderRadius:16,
                       background: isUser 
                         ? "linear-gradient(135deg, #22c55e, #3b82f6)" 
-                        : "rgba(255,255,255,0.08)",
+                        : "var(--neutral-soft)",
                       border: isUser ? "none" : "1px solid var(--stroke)",
                       color: isUser ? "#fff" : "var(--text)"
                     }}>
@@ -871,62 +1187,117 @@ export default function LivingSpaceLayout({
                 );
               })}
               
-              {/* Confirmed Decisions - Modern Cards */}
+              {/* Confirmed Decisions – simple one-line bubbles, professional labels */}
               {!loading && allDecisions.filter(d => d.isConfirmed).length > 0 && (
                 allDecisions.filter(d => d.isConfirmed).map((decision) => (
                   <div key={decision.decisionId} style={{
                     alignSelf:"flex-start",
                     maxWidth:"75%",
-                    padding:14,
-                    borderRadius:16,
-                    background:"rgba(34,197,94,0.15)",
-                    border:"1px solid rgba(34,197,94,0.3)"
+                    padding:10,
+                    borderRadius:12,
+                    background:"var(--good-soft)",
+                    border:"1px solid var(--good)",
+                    color:"var(--text)",
+                    display:"flex",
+                    alignItems:"center",
+                    gap:8,
+                    flexWrap:"wrap"
                   }}>
-                    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
-                      <div style={{
-                        width:32,
-                        height:32,
-                        borderRadius:"50%",
-                        background:"rgba(34,197,94,0.3)",
-                        display:"flex",
-                        alignItems:"center",
-                        justifyContent:"center",
-                        fontSize:16
-                      }}>✅</div>
-                      <div>
-                        <b style={{fontSize:12}}>Decision Confirmed</b>
-                        <div className="small" style={{fontSize:10, opacity:0.7}}>
-                          {decision.decisionTimestamp ? new Date(decision.decisionTimestamp).toLocaleString() : new Date().toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{marginTop:8, fontSize:13}}>
-                      <b>{decision.type}:</b> {decision.details || decision.option?.label || decision.option?.id}
-                    </div>
-                    {decision.decidedBy && (
-                      <div style={{marginTop:6, fontSize:11, opacity:0.8}}>
-                        Decided by: {decision.decidedBy} · Method: {decision.decisionMethod || "chat"}
-                      </div>
-                    )}
+                    <span style={{fontSize:14, color:"var(--good)"}}>✓</span>
+                    <span style={{fontSize:12, fontWeight:600, color:"var(--text)"}}>{formatDecisionTypeLabel(decision.type || decision.originalDecision?.type)}:</span>
+                    <span style={{fontSize:12, color:"var(--text)"}}>{decision.details || decision.option?.label || decision.option?.id}</span>
+                    <span className="small" style={{fontSize:10, opacity:0.7, marginLeft:"auto"}}>
+                      {decision.decisionTimestamp ? new Date(decision.decisionTimestamp).toLocaleString() : ""}
+                    </span>
                   </div>
                 ))
               )}
+
+              {/* Combined stream: Sir AI Insights + Relevant Legal (same scroll as activity) */}
+              {activeSession === "buyer" && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{
+                    background: "var(--cool-soft)",
+                    border: "1px solid var(--stroke)",
+                    borderRadius: 12,
+                    padding: 14,
+                    color: "var(--text)",
+                  }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--text)" }}>
+                      AI Insights ({" "}
+                      {result ? (confidence || (ragResponse && ragResponse.confidence != null ? Math.round(ragResponse.confidence * 100) : 70)) : 70}
+                      % Confidence)
+                    </h3>
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.8 }}>
+                      {(ragResponse?.summary
+                        ? ragResponse.summary.split(/\n|•/).filter(Boolean).slice(0, 6)
+                        : [
+                            "Prices vary by locality & property type",
+                            "Prioritize metro, schools & commercial access",
+                            "Verify title deed, registration & encumbrance",
+                            "Check RERA for new projects",
+                            "Compare bank & NBFC loan options",
+                          ]
+                      ).map((line, i) => (
+                        <li key={i}>{line.trim()}</li>
+                      ))}
+                    </ul>
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => onAnalyze && input.trim() && onAnalyze()}
+                        style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11 }}
+                      >
+                        🔍 Apply to my search
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => setInput((p) => p + (p ? " " : "") + "Follow-up: more details")}
+                        style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11 }}
+                      >
+                        {"Ask follow-up >"}
+                      </button>
+                    </div>
+                  </div>
+                  {(explainabilityResult?.legalReferences?.length > 0 || result) && (
+                    <div style={{ marginTop: 12, padding: 10, borderRadius: 10, background: "var(--cool-soft)", border: "1px solid var(--stroke)" }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>Relevant Legal Checks</div>
+                      {(explainabilityResult?.legalReferences?.length > 0
+                        ? explainabilityResult.legalReferences.slice(0, 3)
+                        : [{ title: "Legal Reference", timestamp: new Date().toISOString() }]
+                      ).map((ref, i) => (
+                        <div key={i} className="small" style={{ fontSize: 11, opacity: 0.9, marginBottom: 4 }}>
+                          {typeof ref === "string" ? ref : ref.title || "Legal Reference"}
+                          <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                            {typeof ref === "object" && ref.timestamp
+                              ? new Date(ref.timestamp).toLocaleString()
+                              : new Date().toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            
-            {/* Modern Chat Input Bar */}
+
+            {/* Intent / Chat Input Bar (fixed at bottom) */}
             <div style={{
               padding:12,
               borderTop:"1px solid var(--stroke)",
-              background:"rgba(0,0,0,0.3)",
+              background:"var(--card)",
               display:"flex",
-              gap:8,
-              alignItems:"center"
+              flexDirection:"column",
+              gap:8
             }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {activeSession === "buyer" && !result ? (
                 <>
                   <input 
                     className="input" 
-                    placeholder="Describe your intent... (e.g., Buy a home in Vizag Under 50L)"
+                    placeholder="I want to buy a 2BHK in Vizag under 50L near metro"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -938,7 +1309,8 @@ export default function LivingSpaceLayout({
                     disabled={loading}
                     style={{
                       flex:1,
-                      background:"rgba(0,0,0,0.4)",
+                      background:"var(--card)",
+                      color:"var(--text)",
                       border:"1px solid var(--stroke)",
                       padding:"12px 16px",
                       borderRadius:12,
@@ -985,7 +1357,8 @@ export default function LivingSpaceLayout({
                     }}
                     style={{
                       flex:1,
-                      background:"rgba(0,0,0,0.4)",
+                      background:"var(--card)",
+                      color:"var(--text)",
                       border:"1px solid var(--stroke)",
                       padding:"12px 16px",
                       borderRadius:12,
@@ -1010,11 +1383,23 @@ export default function LivingSpaceLayout({
                   </button>
                 </>
               )}
+              </div>
+              {/* Sir: Try suggestions (intent-ai-preview) */}
+              {activeSession === "buyer" && !result && (
+                <div style={{ paddingLeft: 4 }}>
+                  <span className="small" style={{ fontSize: 11, opacity: 0.8 }}>Try: </span>
+                  <button type="button" className="btn" style={{ fontSize: 11, padding: "4px 8px", marginLeft: 4 }} onClick={() => setInput("Investment property with rental yield")}>
+                    Investment property with rental yield
+                  </button>
+                  <button type="button" className="btn" style={{ fontSize: 11, padding: "4px 8px", marginLeft: 4 }} onClick={() => setInput("Verify legal status of a flat")}>
+                    Verify legal status of a flat
+                  </button>
+                </div>
+              )}
               {error && activeSession === "buyer" && (
                 <div style={{
-                  marginTop:12,
                   padding:12,
-                  background:"rgba(239,68,68,0.2)",
+                  background:"var(--bad-soft)",
                   borderRadius:8,
                   border:"1px solid var(--bad)"
                 }}>
@@ -1038,7 +1423,7 @@ export default function LivingSpaceLayout({
                   padding:8,
                   marginTop:8,
                   borderRadius:8,
-                  background:"rgba(0,0,0,0.2)"
+                  background:"var(--neutral-soft)"
                 }}>
                   {propertyImages.map((img, idx) => (
                     <img
@@ -1076,7 +1461,7 @@ export default function LivingSpaceLayout({
                     src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "YOUR_API_KEY"}&q=${mapCoordinates.lat},${mapCoordinates.lng}&zoom=15`}
                     allowFullScreen
                   />
-                  <div className="small" style={{padding:8, background:"rgba(0,0,0,0.3)"}}>
+                  <div className="small" style={{padding:8, background:"var(--neutral-soft)"}}>
                     📍 Location: {mapCoordinates.lat}, {mapCoordinates.lng}
                   </div>
                 </div>
@@ -1117,361 +1502,291 @@ export default function LivingSpaceLayout({
           )}
         </div>
 
-          {/* RIGHT: Actions + Decisions + Trust Receipt - Scrollable Panel */}
+          {/* RIGHT: Your Buying Journey + Actions (wider, scroll right if needed) */}
           <div style={{
             display:"flex",
             flexDirection:"column",
             height:"calc(100vh - 180px)",
             maxHeight:"800px",
             overflowY:"auto",
-            overflowX:"hidden",
+            overflowX:"auto",
+            minWidth:0,
             paddingRight:4
           }}>
-          {/* Trust Receipt (Compliance Gate) */}
-          <div className="card" style={{padding:result ? 8 : 12, marginBottom:result ? 8 : 12}}>
-            <div className="title" style={{fontSize:result ? 13 : 16}}>Trust Receipt (Certification Gate)</div>
-            {compliance ? (
-              <>
-                <div className="small">
-                  {compliance.decision === "ALLOW" ? "Intent is compliant and allowed to proceed." : 
-                   compliance.decision === "DENY" ? "Intent is not compliant and cannot proceed." : 
-                   "Intent requires review before proceeding."}
-                </div>
-                
-                <div style={{marginTop:result ? 6 : 10}}>
-                  <div className="small" style={{fontSize:result ? 10 : 12}}><b>Gate Status:</b></div>
-                  <div style={{fontSize:result ? 14 : 20, fontWeight:950, color:compliance.decision === "ALLOW" ? "var(--good)" : compliance.decision === "DENY" ? "var(--bad)" : "var(--warn)", marginTop:4}}>
-                    {compliance.decision === "ALLOW" ? "✅ UNLOCKED" : compliance.decision === "DENY" ? "🔒 LOCKED" : "⚠️ LOCKED"}
-                  </div>
-                </div>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="title" style={{ fontSize: 14, marginBottom: 10 }}>Your Buying Journey</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
 
-                {compliance.checks && compliance.checks.length > 0 && (
-                  <div className="list" style={{marginTop:result ? 6 : 10}}>
-                    {compliance.checks.map((c,i)=>(
-                      <div key={i} className="item" style={{display:"flex", justifyContent:"space-between", gap:10, padding:result ? "6px" : undefined}}>
-                        <div>
-                          <b style={{fontSize:result ? 11 : undefined}}>{c.check}</b>
-                          <div className="small" style={{fontSize:result ? 9 : undefined}}>{c.reason}</div>
-                        </div>
-                        <div className={c.passed ? "statusPass" : "statusFail"} style={{fontSize:result ? 9 : undefined}}>{c.passed ? "PASS" : "FAIL"}</div>
-                      </div>
-                    ))}
+              {/* 1. Intent Identified – click to expand */}
+              <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setJourneyExpanded(journeyExpanded === "intent" ? null : "intent")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setJourneyExpanded(journeyExpanded === "intent" ? null : "intent"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 8, borderRadius: 8, cursor: "pointer", background: journeyExpanded === "intent" ? "var(--cool-soft)" : "var(--neutral-soft)", border: "1px solid var(--stroke)" }}
+                >
+                  <span style={{ fontWeight: "bold", fontSize: 12 }}>1.</span>
+                  <span style={{ flex: 1, fontSize: 12 }}>Intent Identified</span>
+                  <span className="pill" style={{ fontSize: 9 }}>{result ? "Ready" : "Pending"}</span>
+                  <span style={{ fontSize: 10 }}>{journeyExpanded === "intent" ? "▼" : "▶"}</span>
+                </div>
+                {journeyExpanded === "intent" && result && (
+                  <div style={{ marginTop: 6, padding: 8, borderRadius: 8, background: "var(--neutral-soft)", border: "1px solid var(--stroke)", fontSize: 11 }}>
+                    <div><b>Intent:</b> {formatIntentLabel(result.type)} · {result.payload?.location || "—"} · {result.payload?.budget ? "₹" + (result.payload.budget / 100000).toFixed(0) + "L" : "—"}</div>
+                    <div style={{ marginTop: 4 }}><b>Notes:</b> {result?.payload?.originalText || "—"}</div>
                   </div>
                 )}
+              </div>
 
-                {/* Decision Audit Trail - Only show if there are confirmed decisions */}
-                {allDecisions.filter(d => d.isConfirmed).length > 0 && (
-                  <div style={{marginTop:result ? 8 : 15, paddingTop:result ? 8 : 15, borderTop:"1px solid var(--stroke)"}}>
-                    <div className="small" style={{fontWeight:"bold", marginBottom:result ? 4 : 8, fontSize:result ? 10 : undefined}}>Decision Audit Trail:</div>
-                    <div className="list" style={{marginTop:result ? 4 : 8}}>
-                      {allDecisions.filter(d => d.isConfirmed).map((rec, idx) => (
-                        <div key={idx} className="item" style={{padding:result ? 6 : 8}}>
-                          <div className="small" style={{fontSize:result ? 10 : undefined}}><b>{rec.type}:</b></div>
-                          {rec.recommendedOption && (
-                            <div className="small" style={{marginTop:result ? 2 : 4, opacity:0.8, fontSize:result ? 9 : undefined}}>
-                              AI Recommended: {rec.recommendedOption.label || rec.recommendedOption.id} ({rec.confidence.toFixed(0)}%)
-                            </div>
-                          )}
-                          <div className="small" style={{marginTop:result ? 1 : 2, fontSize:result ? 10 : undefined}}>
-                            Final Decision: <b>{rec.details || rec.option?.label || rec.option?.id}</b>
+              {/* 2. Compliance Check – click to expand (Trust Receipt / gate / checks) */}
+              <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setJourneyExpanded(journeyExpanded === "compliance" ? null : "compliance")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setJourneyExpanded(journeyExpanded === "compliance" ? null : "compliance"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 8, borderRadius: 8, cursor: "pointer", background: journeyExpanded === "compliance" ? "var(--cool-soft)" : "var(--neutral-soft)", border: "1px solid var(--stroke)" }}
+                >
+                  <span style={{ fontWeight: "bold", fontSize: 12 }}>2.</span>
+                  <span style={{ flex: 1, fontSize: 12 }}>Compliance Check</span>
+                  <span className="pill" style={{ fontSize: 9 }}>{compliance ? (compliance.decision === "ALLOW" ? "Pass" : "Review") : "Pending"}</span>
+                  <span style={{ fontSize: 10 }}>{journeyExpanded === "compliance" ? "▼" : "▶"}</span>
+                </div>
+                {journeyExpanded === "compliance" && (
+                  <div style={{ marginTop: 6, padding: 8, borderRadius: 8, background: "var(--card)", color: "var(--text)", border: "1px solid var(--stroke)", fontSize: 11 }}>
+                    {trustReceipt ? (
+                      <>
+                        <div><strong>Generated:</strong> {trustReceipt.generatedAt ? new Date(trustReceipt.generatedAt).toLocaleString() : "—"}</div>
+                        <div style={{ marginTop: 4 }}>{trustReceipt.intentType} · {trustReceipt.location} · {trustReceipt.budget}</div>
+                        {trustReceipt.checks?.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            {trustReceipt.checks.map((c, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 10 }}>
+                                <span>{c.label}</span>
+                                <span style={{ color: c.status === "OK" ? "var(--good)" : c.status === "PENDING" ? "var(--warn)" : "var(--muted)" }}>{c.status}</span>
+                              </div>
+                            ))}
                           </div>
-                          {rec.decidedBy && (
-                            <div className="small" style={{marginTop:result ? 1 : 2, fontSize:result ? 9 : 10, opacity:0.8}}>
-                              Decided by: {rec.decidedBy} · Method: {rec.decisionMethod || "chat"}
-                            </div>
-                          )}
-                          {rec.decisionTimestamp && (
-                            <div className="small" style={{fontSize:result ? 9 : 10, opacity:0.7}}>
-                              {new Date(rec.decisionTimestamp).toLocaleString()}
-                            </div>
-                          )}
+                        )}
+                      </>
+                    ) : compliance ? (
+                      <>
+                        <div>{compliance.decision === "ALLOW" ? "Intent is compliant and allowed to proceed." : compliance.decision === "DENY" ? "Intent is not compliant." : "Intent requires review."}</div>
+                        <div style={{ marginTop: 6, fontWeight: 600, color: compliance.decision === "ALLOW" ? "var(--good)" : compliance.decision === "DENY" ? "var(--bad)" : "var(--warn)" }}>
+                          {compliance.decision === "ALLOW" ? "✅ UNLOCKED" : compliance.decision === "DENY" ? "🔒 LOCKED" : "⚠️ LOCKED"}
                         </div>
-                      ))}
-                    </div>
+                        {compliance.checks?.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            {compliance.checks.map((c, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 10 }}>
+                                <span>{c.check}</span>
+                                <span className={c.passed ? "statusPass" : "statusFail"}>{c.passed ? "PASS" : "FAIL"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{ opacity: 0.7 }}>Enter your intent to see compliance status</div>
+                    )}
                   </div>
                 )}
-              </>
-            ) : (
-              <div className="small" style={{marginTop:8, opacity:0.6}}>
-                Enter your intent to see compliance status
               </div>
-            )}
-          </div>
 
-          {/* Final Decisions Panel - Shows all decisions (pending + confirmed) with Accept/Change/Reject */}
-          <div className="section card" style={{padding:12, marginBottom:12}}>
-            <div className="title" style={{fontSize:16}}>Final Decisions</div>
-            <div className="small" style={{fontSize:12}}>Review AI recommendations and confirm your decisions.</div>
-            {allDecisions.length > 0 ? (
-              <div className="list" style={{marginTop:10}}>
-                {allDecisions.map((decision, idx) => {
-                  const decisionType = (decision.originalDecision?.type || "").toUpperCase();
-                  const isAgent = decisionType.includes("AGENT");
-                  const isProperty = decisionType.includes("PROPERTY");
-                  const isBank = decisionType.includes("LENDER") || decisionType.includes("BANK");
-                  const isDownPayment = decisionType.includes("DOWN_PAYMENT") || decisionType.includes("DOWNPAYMENT");
-                  
-                  return (
-                    <div key={decision.decisionId || idx} className="item" style={{
-                      borderLeft: decision.isConfirmed ? "3px solid var(--good)" : "3px solid var(--warn)",
-                      padding: "12px 12px 12px 12px"
-                    }}>
-                      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
-                        <b style={{fontSize:14}}>
-                          {isAgent && "Agent"}
-                          {isProperty && "Property"}
-                          {isBank && "Bank"}
-                          {isDownPayment && "Down Payment"}
-                          {!isAgent && !isProperty && !isBank && !isDownPayment && decision.type}
-                        </b>
-                        <span className="pill" style={{
-                          background: decision.isConfirmed ? "rgba(34,197,94,0.2)" : "rgba(251,191,36,0.2)",
-                          color: decision.isConfirmed ? "var(--good)" : "var(--warn)",
-                          fontSize:10
-                        }}>
-                          {decision.isConfirmed ? "✅ CONFIRMED" : `⏳ ${decision.confidence.toFixed(0)}%`}
-                        </span>
-                      </div>
-                      
-                      {/* Detailed Decision Information */}
-                      <div style={{
-                        padding:10,
-                        background: decision.isConfirmed ? "rgba(34,197,94,0.1)" : "rgba(59,130,246,0.1)",
-                        borderRadius:6,
-                        border: decision.isConfirmed ? "1px solid var(--good)" : "1px solid var(--cool)",
-                        marginBottom:8
-                      }}>
-                        {decision.isConfirmed ? (
-                          // For confirmed decisions, show detailed format
-                          <div className="small" style={{fontSize:13, lineHeight:1.6, fontWeight:500}}>
-                            {(() => {
-                              // Always use formatDecisionDetails for confirmed decisions
-                              const option = decision.option || decision.selectedOption;
-                              if (!option) return "Not available";
-                              
-                              // Use the formatDecisionDetails function with correct confidence
-                              const decisionForFormat = {
-                                ...decision.originalDecision,
-                                confidence: (decision.confidence || 0) / 100, // Convert back to 0-1 for formatDecisionDetails
-                                type: decision.originalDecision?.type || decision.type
-                              };
-                              
-                              const formatted = formatDecisionDetails(decisionForFormat, option);
-                              return formatted || decision.details || option.label || "Not available";
-                            })()}
-                          </div>
-                        ) : (
-                          // For pending decisions, show recommendation with reasoning
-                          <>
-                            {decision.details ? (
-                              <div className="small" style={{fontSize:13, lineHeight:1.6, fontWeight:400}}>
-                                {decision.details}
-                              </div>
-                            ) : (
-                              <div className="small" style={{fontSize:12}}>
-                                {decision.option?.label || decision.option?.id || "Not available"}
-                              </div>
-                            )}
-                            {decision.reasoning && (
-                              <div className="small" style={{marginTop:6, fontSize:10, fontStyle:"italic", opacity:0.8}}>
-                                💡 {decision.reasoning}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      
-                      {/* Action Buttons - Only show for pending decisions */}
-                      {!decision.isConfirmed && (
-                        <div style={{display:"flex", gap:6, marginTop:8}}>
-                          <button 
-                            className="btn primary" 
-                            style={{flex:1, fontSize:11, padding:"8px 12px"}}
-                            onClick={() => {
-                              if (onDecisionSelect && decision.option) {
-                                onDecisionSelect(decision.decisionId, decision.option.id, true);
-                              }
-                            }}
-                            disabled={loading}
-                          >
-                            ✅ Accept
-                          </button>
-                          <button 
-                            className="btn" 
-                            style={{flex:1, fontSize:11, padding:"8px 12px"}}
-                            onClick={() => {
-                              if (onDecisionChangeClick) {
-                                onDecisionChangeClick(decision, null);
-                              }
-                            }}
-                            disabled={loading}
-                          >
-                            🔄 Change
-                          </button>
-                          <button 
-                            className="btn" 
-                            style={{flex:1, fontSize:11, padding:"8px 12px", background:"rgba(239,68,68,0.2)", color:"var(--bad)"}}
-                            onClick={() => {
-                              // Reject logic - could mark as rejected or skip
-                              console.log("Reject decision:", decision.decisionId);
-                            }}
-                            disabled={loading}
-                          >
-                            ❌ Reject
-                          </button>
-                        </div>
-                      )}
-                      
-                      {/* Confirmed Decision Info + Change Button */}
-                      {decision.isConfirmed && (
-                        <div>
-                          <div style={{marginTop:8, padding:6, background:"rgba(34,197,94,0.05)", borderRadius:4, marginBottom:8}}>
-                            {decision.decidedBy && (
-                              <div className="small" style={{fontSize:10, opacity:0.8}}>
-                                Approved by: {decision.decidedBy}
-                              </div>
-                            )}
-                            {decision.decisionMethod && (
-                              <div className="small" style={{fontSize:10, opacity:0.8}}>
-                                Method: {decision.decisionMethod === "chat" ? "💬 Chat" : decision.decisionMethod === "voice" ? "🎤 Voice" : decision.decisionMethod}
-                              </div>
-                            )}
-                            {decision.decisionTimestamp && (
-                              <div className="small" style={{fontSize:10, opacity:0.7, marginTop:4}}>
-                                {new Date(decision.decisionTimestamp).toLocaleString()}
-                              </div>
-                            )}
-                          </div>
-                          {/* Change Button for Confirmed Decisions - Only show if actually confirmed */}
-                          {decision.originalDecision?.evolutionState === "CONFIRMED" && (
-                            <button 
-                              className="btn" 
-                              style={{width:"100%", fontSize:11, padding:"8px 12px", marginTop:8}}
-                              onClick={() => {
-                                if (onDecisionChangeClick && decision.originalDecision?.evolutionState === "CONFIRMED") {
-                                  onDecisionChangeClick(decision, null);
-                                } else {
-                                  console.warn("Cannot change decision: not in CONFIRMED state", decision.originalDecision?.evolutionState);
-                                }
-                              }}
-                              disabled={loading}
-                            >
-                              🔄 Change Decision
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="small" style={{marginTop:10, opacity:0.6, fontSize:11}}>
-                AI recommendations will appear here after intent analysis
-              </div>
-            )}
-          </div>
-
-
-          {/* Actions */}
-          <div className="section card" style={{padding:12}}>
-            <div className="title" style={{fontSize:16}}>Actions</div>
-            <div className="small" style={{fontSize:12}}>Track and complete actions for this intent.</div>
-            {uniqueActions.length > 0 ? (() => {
-              // Filter actions: show only the latest version of each action
-              // If an action is completed, don't show it again as pending
-              const actionMap = new Map();
-              uniqueActions.forEach(action => {
-                const id = action.actionId || action.id;
-                const isCompleted = action.outcome === "COMPLETED" || action.outcome === "CONFIRMED";
-                
-                if (!actionMap.has(id)) {
-                  actionMap.set(id, action);
-                } else {
-                  const existing = actionMap.get(id);
-                  const existingIsCompleted = existing.outcome === "COMPLETED" || existing.outcome === "CONFIRMED";
-                  
-                  // If existing is completed and new one is pending, don't replace (completed takes precedence)
-                  if (existingIsCompleted && !isCompleted) {
-                    // Keep existing completed action
-                    return;
-                  }
-                  // If new one is completed or both are pending, use the new one
-                  actionMap.set(id, action);
-                }
-              });
-              
-              // Convert to array and sort
-              const displayActions = Array.from(actionMap.values()).sort((a, b) => {
-                const orderA = a.order || a.sequence || 999;
-                const orderB = b.order || b.sequence || 999;
-                return orderA - orderB;
-              });
-              
-              return (
-                <div className="list" style={{marginTop:10}}>
-                  {displayActions.map((action, index) => {
-                    const isCompleted = action.outcome === "COMPLETED" || action.outcome === "CONFIRMED";
-                    const isFailed = action.outcome === "FAILED";
-                    const isRescheduled = action.outcome === "RESCHEDULED";
-                    const previousAction = index > 0 ? displayActions[index - 1] : null;
-                    const isLocked = previousAction && 
-                      previousAction.outcome !== "COMPLETED" && 
-                      previousAction.outcome !== "CONFIRMED" &&
-                      previousAction.outcome !== "SKIPPED";
-                    
-                    return (
-                      <div key={action.actionId} className="item" style={{
-                        opacity: isLocked ? 0.5 : 1,
-                        borderLeft: !isLocked && !action.outcome ? "3px solid var(--primary)" : "none",
-                        padding: !isLocked && !action.outcome ? "12px 12px 12px 12px" : "12px"
-                      }}>
-                        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
-                          <div style={{display:"flex", alignItems:"center", gap:8}}>
-                            {isLocked && <span style={{fontSize:18}}>🔒</span>}
-                            <b style={{fontSize:14}}>{action.description || "Action"}</b>
-                          </div>
-                          <span className="pill" style={{
-                            background:isCompleted ? "rgba(34,197,94,0.2)" : 
-                                      isFailed ? "rgba(239,68,68,0.2)" : 
-                                      isRescheduled ? "rgba(251,191,36,0.2)" :
-                                      isLocked ? "rgba(107,114,128,0.2)" :
-                                      "rgba(255,255,255,0.06)", 
-                            color:isCompleted ? "var(--good)" : 
-                                   isFailed ? "var(--bad)" : 
-                                   isRescheduled ? "var(--warn)" :
-                                   isLocked ? "var(--muted)" :
-                                   "var(--muted)",
-                            fontSize:10
-                          }}>
-                            {isLocked ? "🔒 LOCKED" : action.outcome || action.status || "READY"}
-                          </span>
-                        </div>
-                        {action.guidance && (
-                          <div className="small" style={{marginBottom:8, fontSize:12}}>💡 {action.guidance}</div>
-                        )}
-                        {isLocked && (
-                          <div className="small" style={{marginBottom:8, color:"var(--muted)", fontStyle:"italic", fontSize:11}}>
-                            ⏳ Waiting for previous action to complete
-                          </div>
-                        )}
-                        {!action.outcome && !isLocked && (
-                          <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-                            <button className="btn primary" onClick={()=>onActionOutcome(action, "COMPLETED")} disabled={loading} style={{fontSize:11, padding:"8px 12px"}}>Complete</button>
-                            <button className="btn" onClick={()=>onActionOutcome(action, "FAILED")} disabled={loading} style={{fontSize:11, padding:"8px 12px"}}>Fail</button>
-                            <button className="btn" onClick={()=>onActionOutcome(action, "RESCHEDULED")} disabled={loading} style={{fontSize:11, padding:"8px 12px"}}>Reschedule</button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+              {/* 3. Final Decisions – click to expand (decisions + Confirm all) */}
+              <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setJourneyExpanded(journeyExpanded === "decisions" ? null : "decisions")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setJourneyExpanded(journeyExpanded === "decisions" ? null : "decisions"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 8, borderRadius: 8, cursor: "pointer", background: journeyExpanded === "decisions" ? "var(--cool-soft)" : "var(--neutral-soft)", border: "1px solid var(--stroke)" }}
+                >
+                  <span style={{ fontWeight: "bold", fontSize: 12 }}>3.</span>
+                  <span style={{ flex: 1, fontSize: 12 }}>Final Decisions</span>
+                  <span className="pill" style={{ fontSize: 9 }}>{intentFilteredDecisions.length ? intentFilteredDecisions.filter(d => d.isConfirmed).length + "/" + intentFilteredDecisions.length : "—"}</span>
+                  <span style={{ fontSize: 10 }}>{journeyExpanded === "decisions" ? "▼" : "▶"}</span>
                 </div>
-              );
-            })() : (
-              <div className="small" style={{marginTop:10, opacity:0.6}}>
-                Actions will appear here after decisions are made
+                {journeyExpanded === "decisions" && (
+                  <div style={{ marginTop: 6, padding: 8, borderRadius: 8, background: "var(--neutral-soft)", border: "1px solid var(--stroke)" }}>
+                    {intentFilteredDecisions.length > 0 && intentFilteredDecisions.some(d => !d.isConfirmed) && (onConfirmAll || onDecisionSelect) && (
+                      <button className="btn primary" style={{ fontSize: 11, padding: "6px 10px", marginBottom: 8 }} onClick={async () => {
+                        const pending = intentFilteredDecisions.filter(d => !d.isConfirmed && d.option);
+                        if (onConfirmAll) {
+                          await onConfirmAll(pending.map(d => ({ decisionId: d.decisionId, optionId: d.option.id })));
+                        } else {
+                          pending.forEach(d => onDecisionSelect(d.decisionId, d.option.id, true));
+                        }
+                      }} disabled={loading}>Confirm all</button>
+                    )}
+                    {intentFilteredDecisions.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {intentFilteredDecisions.map((decision, idx) => {
+                          const dt = (decision.originalDecision?.type || "").toUpperCase();
+                          const label = dt.includes("AGENT") ? "Agent" : dt.includes("PROPERTY") && !dt.includes("AGENT") ? "Property" : dt.includes("LENDER") || dt.includes("BANK") ? "Bank" : dt.includes("DOWN_PAYMENT") || dt.includes("DOWNPAYMENT") ? "Down payment" : formatDecisionTypeLabel(decision.type);
+                          const value = decision.details || decision.option?.label || decision.option?.id || "—";
+                          return (
+                            <div key={decision.decisionId || idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, padding: 6, borderRadius: 6, borderLeft: decision.isConfirmed ? "3px solid var(--good)" : "3px solid var(--warn)", background: decision.isConfirmed ? "var(--good-soft)" : "var(--neutral-soft)", fontSize: 11 }}>
+                              <span><b>{label}</b> {value}</span>
+                              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                {decision.isConfirmed ? (onDecisionChangeClick && <button type="button" className="btn" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => onDecisionChangeClick(decision, null)} disabled={loading}>Change</button>) : (<>{onDecisionSelect && decision.option && <button type="button" className="btn primary" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => onDecisionSelect(decision.decisionId, decision.option.id, true)} disabled={loading}>Accept</button>}{onDecisionChangeClick && <button type="button" className="btn" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => onDecisionChangeClick(decision, null)} disabled={loading}>Change</button>}</>)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="small" style={{ opacity: 0.6, fontSize: 11 }}>{result ? "No decisions for this intent yet; they appear after analysis." : "AI recommendations appear after intent analysis."}</div>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+
+              {/* 4. Actions – click to expand */}
+              <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setJourneyExpanded(journeyExpanded === "actions" ? null : "actions")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setJourneyExpanded(journeyExpanded === "actions" ? null : "actions"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 10, borderRadius: 8, cursor: "pointer", background: journeyExpanded === "actions" ? "var(--cool-soft)" : "var(--neutral-soft)", border: "1px solid var(--stroke)" }}
+                >
+                  <span style={{ fontWeight: "bold", fontSize: 13 }}>4.</span>
+                  <span style={{ flex: 1, fontSize: 13 }}>Actions</span>
+                  <span className="pill" style={{ fontSize: 11 }}>{intentFilteredActions.length ? intentFilteredActions.filter(a => a.outcome === "COMPLETED" || a.outcome === "CONFIRMED").length + "/" + intentFilteredActions.length : "—"}</span>
+                  <span style={{ fontSize: 12 }}>{journeyExpanded === "actions" ? "▼" : "▶"}</span>
+                </div>
+                {journeyExpanded === "actions" && (
+                  <div style={{ marginTop: 6, padding: 12, borderRadius: 8, background: "var(--neutral-soft)", border: "1px solid var(--stroke)", overflowX: "auto", minWidth: 280 }}>
+                    {intentFilteredActions.length > 0 ? (() => {
+                      const actionMap = new Map();
+                      intentFilteredActions.forEach(a => { const id = a.actionId || a.id; const done = a.outcome === "COMPLETED" || a.outcome === "CONFIRMED"; if (!actionMap.has(id)) actionMap.set(id, a); else { const ex = actionMap.get(id); if ((ex.outcome === "COMPLETED" || ex.outcome === "CONFIRMED") && !done) return; actionMap.set(id, a); } });
+                      const list = Array.from(actionMap.values()).sort((a, b) => (a.order || a.sequence || 999) - (b.order || b.sequence || 999));
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                          {list.map((action, i) => {
+                            const done = action.outcome === "COMPLETED" || action.outcome === "CONFIRMED";
+                            const prev = i > 0 ? list[i - 1] : null;
+                            const locked = prev && prev.outcome !== "COMPLETED" && prev.outcome !== "CONFIRMED" && prev.outcome !== "SKIPPED";
+                            const actionId = action.actionId || action.id || `${action.description}-${action.order}`;
+                            const showUpload = actionRequiresDocuments(action) && !locked;
+                            const docs = actionDocuments[actionId] || [];
+                            const addDocs = (files) => {
+                              if (!files?.length) return;
+                              const newEntries = Array.from(files).map((f, idx) => ({ id: `${actionId}-${Date.now()}-${idx}`, name: f.name, size: f.size }));
+                              setActionDocuments(prev => ({ ...prev, [actionId]: [...(prev[actionId] || []), ...newEntries] }));
+                            };
+                            const removeDoc = (id) => setActionDocuments(prev => ({ ...prev, [actionId]: (prev[actionId] || []).filter(d => d.id !== id) }));
+                            return (
+                              <div key={action.actionId || actionId} style={{ opacity: locked ? 0.5 : 1, padding: 12, borderRadius: 8, borderLeft: !locked && !action.outcome ? "4px solid var(--primary)" : "none", background: "var(--neutral-soft)" }}>
+                                <div style={{ fontSize: 15, lineHeight: 1.5, fontWeight: 500, marginBottom: 8, wordBreak: "break-word", overflowWrap: "break-word" }}>{locked && "🔒 "}{action.description || "Action"}</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                  <span className="pill" style={{ fontSize: 13, padding: "4px 10px", background: done ? "var(--good-soft)" : "var(--neutral-soft)", color: done ? "var(--good)" : "var(--muted)" }}>{locked ? "Locked" : (action.outcome || "Ready")}</span>
+                                  {!action.outcome && !locked && onActionOutcome && <><button type="button" className="btn primary" style={{ fontSize: 13, padding: "8px 14px" }} onClick={() => onActionOutcome(action, "COMPLETED")} disabled={loading}>Done</button><button type="button" className="btn" style={{ fontSize: 13, padding: "8px 12px" }} onClick={() => onActionOutcome(action, "FAILED")} disabled={loading}>Fail</button></>}
+                                </div>
+                                {showUpload && (
+                                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--stroke)" }}>
+                                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--muted)" }}>Upload documents for verification</div>
+                                    <input
+                                      type="file"
+                                      accept=".pdf,image/*,.doc,.docx"
+                                      multiple
+                                      onChange={(e) => { addDocs(e.target.files || []); e.target.value = ""; }}
+                                      style={{ fontSize: 12, marginBottom: 8, maxWidth: "100%" }}
+                                    />
+                                    {docs.length > 0 && (
+                                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
+                                        {docs.map((d) => (
+                                          <li key={d.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                                            <span style={{ flex: 1, wordBreak: "break-word" }}>{d.name}</span>
+                                            <button type="button" className="btn" style={{ fontSize: 11, padding: "2px 6px" }} onClick={() => removeDoc(d.id)} aria-label="Remove">×</button>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })() : (
+                      <div className="small" style={{ opacity: 0.6, fontSize: 15 }}>{result ? "No actions for this intent yet; they appear after decisions." : "Actions appear after decisions."}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 5. Session History – what we searched, got, decided, and completed */}
+              <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setJourneyExpanded(journeyExpanded === "history" ? null : "history")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setJourneyExpanded(journeyExpanded === "history" ? null : "history"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: 10, borderRadius: 8, cursor: "pointer", background: journeyExpanded === "history" ? "var(--cool-soft)" : "var(--neutral-soft)", border: "1px solid var(--stroke)" }}
+                >
+                  <span style={{ fontWeight: "bold", fontSize: 13 }}>5.</span>
+                  <span style={{ flex: 1, fontSize: 13 }}>Session History</span>
+                  <span style={{ fontSize: 12 }}>{journeyExpanded === "history" ? "▼" : "▶"}</span>
+                </div>
+                {journeyExpanded === "history" && (
+                  <div style={{ marginTop: 6, padding: 12, borderRadius: 8, background: "var(--neutral-soft)", border: "1px solid var(--stroke)", fontSize: 11 }}>
+                    {result ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <div style={{ paddingBottom: 8, borderBottom: "1px solid var(--stroke)" }}>
+                          <b style={{ color: "var(--cool)" }}>What you searched</b>
+                          <div style={{ marginTop: 4 }}>{formatIntentLabel(result.type)} · {result.payload?.location || "—"} {result.payload?.budget ? "· ₹" + (result.payload.budget / 100000).toFixed(0) + "L" : ""}</div>
+                          {result?.payload?.originalText && <div className="small" style={{ marginTop: 4, opacity: 0.9 }}>{result.payload.originalText}</div>}
+                        </div>
+                        {ragResponse && (
+                          <div style={{ paddingBottom: 8, borderBottom: "1px solid var(--stroke)" }}>
+                            <b style={{ color: "var(--cool)" }}>What you got (insights)</b>
+                            <div style={{ marginTop: 4 }}>{ragResponse.summary?.substring(0, 200) || "—"}{ragResponse.summary?.length > 200 ? "…" : ""}</div>
+                            {ragResponse.sources?.length > 0 && <div className="small" style={{ marginTop: 4, opacity: 0.8 }}>{ragResponse.sources.length} source(s) referenced</div>}
+                          </div>
+                        )}
+                        {compliance && (
+                          <div style={{ paddingBottom: 8, borderBottom: "1px solid var(--stroke)" }}>
+                            <b style={{ color: "var(--cool)" }}>Compliance</b>
+                            <div style={{ marginTop: 4 }}>{compliance.decision === "ALLOW" ? "✅ Passed" : compliance.decision === "DENY" ? "❌ Denied" : "⚠️ Review"} {compliance.reason ? "· " + compliance.reason : ""}</div>
+                          </div>
+                        )}
+                        {intentFilteredDecisions.length > 0 && (
+                          <div style={{ paddingBottom: 8, borderBottom: "1px solid var(--stroke)" }}>
+                            <b style={{ color: "var(--cool)" }}>What you decided</b>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                              {intentFilteredDecisions.map((d, i) => {
+                                const dt = (d.originalDecision?.type || d.type || "").toUpperCase();
+                                const label = dt.includes("AGENT") ? "Agent" : dt.includes("PROPERTY") && !dt.includes("AGENT") ? "Property" : dt.includes("LENDER") || dt.includes("BANK") ? "Bank" : dt.includes("DOWN_PAYMENT") ? "Down payment" : formatDecisionTypeLabel(d.type);
+                                const value = d.details || d.option?.label || d.option?.id || "—";
+                                return <div key={i}>{label}: {value} {d.isConfirmed ? "✓" : "(pending)"}</div>;
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {intentFilteredActions.length > 0 && (
+                          <div>
+                            <b style={{ color: "var(--cool)" }}>Actions completed</b>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                              {intentFilteredActions.map((a, i) => {
+                                const done = a.outcome === "COMPLETED" || a.outcome === "CONFIRMED";
+                                return <div key={a.actionId || a.id || i} style={{ opacity: done ? 1 : 0.7 }}>{done ? "✓" : "○"} {a.description || "Action"}</div>;
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="small" style={{ opacity: 0.6 }}>Start a search to see your session history here.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+            </div>
           </div>
         </div>
       </div>

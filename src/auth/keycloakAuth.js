@@ -7,12 +7,21 @@ const USE_MOCK_AUTH = localStorage.getItem('useMockAuth') === 'true' ||
 let keycloak;
 let useMock = false;
 
-// Initialize Keycloak instance
+// Keycloak config from env (build-time for Docker; .env for dev).
+// When the app is loaded over HTTPS, default to same origin so auth stays secure (Web Crypto + no "form not secure").
+const KEYCLOAK_URL =
+  import.meta.env.VITE_KEYCLOAK_URL ||
+  (typeof window !== "undefined" && window.location?.protocol === "https:"
+    ? window.location.origin
+    : "http://localhost:8080");
+const KEYCLOAK_REALM = import.meta.env.VITE_KEYCLOAK_REALM || "intent-platform";
+const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || "intent-frontend";
+
 if (!USE_MOCK_AUTH) {
   keycloak = new Keycloak({
-    url: "http://localhost:8080",
-    realm: "intent-platform",
-    clientId: "intent-frontend",
+    url: KEYCLOAK_URL,
+    realm: KEYCLOAK_REALM,
+    clientId: KEYCLOAK_CLIENT_ID,
   });
 }
 
@@ -78,15 +87,20 @@ export const isAuthenticated = () => {
   return !!keycloak.token;
 };
 
+/**
+ * Role resolution order: admin/superuser first, then agent, seller, property_owner, buyer.
+ * Keycloak realm roles used: buyer, seller, agent, property_owner, admin, superuser
+ */
 export const getRole = () => {
   if (useMock || USE_MOCK_AUTH) {
-    // Return default role in mock mode
     return localStorage.getItem('mockRole') || 'buyer';
   }
   const roles = keycloak.tokenParsed?.realm_access?.roles || [];
-  if (roles.includes("buyer")) return "buyer";
-  if (roles.includes("seller")) return "seller";
+  if (roles.includes("admin") || roles.includes("superuser")) return roles.includes("superuser") ? "superuser" : "admin";
   if (roles.includes("agent")) return "agent";
+  if (roles.includes("seller")) return "seller";
+  if (roles.includes("property_owner") || roles.includes("propertyowner")) return "property_owner";
+  if (roles.includes("buyer")) return "buyer";
   return null;
 };
 

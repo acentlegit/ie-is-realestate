@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   analyzeIntent,
   checkCompliance,
@@ -15,9 +15,11 @@ import {
   queryRAG, // Phase 14: RAG Integration
   determineCountry, // Phase 14: Country detection
 } from "../api/intentApi";
+import { createAgentRequest } from "../api/agentRequestApi";
 import { parseVoiceCommand } from "../utils/voiceCommandParser"; // Phase 13.1
 import keycloak from "../auth/keycloakAuth";
 import { useProgressionTree } from "../progression/useProgressionTree";
+import { parseMultipleIntents, createIntentPayload } from "../utils/multiIntentParser"; // Multi-intent support
 import {
   sendInitialConfirmationEmail,
   sendActionStatusEmail,
@@ -34,6 +36,13 @@ import {
 } from "../services/emailService";
 import LivingSpaceLayout from "../components/LivingSpaceLayout";
 import "../styles/living-space.css";
+import { getRefinementPrompt } from "../services/refinementService";
+import { matchBanks } from "../services/loanService";
+import { calculateROI } from "../services/roiService";
+import { routeModel } from "../services/routeModelService";
+import { calibrateConfidence } from "../services/confidenceService";
+import { generateTrustReceipt } from "../services/trustReceiptService";
+import { loadIntentHistory, saveIntentHistory, saveCurrentSessionToHistory } from "../utils/intentHistoryStorage";
 
 function fmtTime(ts) {
   return new Date(ts).toLocaleString();
@@ -76,6 +85,12 @@ export default function Intent() {
   const [resumeData, setResumeData] = useState(null);
   const [resumeLoading, setResumeLoading] = useState(true);
 
+  // Multi-Intent Support: Store multiple intents and current active intent
+  const [multipleIntents, setMultipleIntents] = useState([]); // Array of { intent, decisions, actions, compliance, etc. }
+  const [intentHistory, setIntentHistory] = useState([]); // Previous intent sessions for History tab (persisted per user)
+  const [activeIntentIndex, setActiveIntentIndex] = useState(0); // Index of currently active intent
+  const latestSessionRef = useRef({ result: null, compliance: null, decisions: [], actions: [], lifecycleState: null, ragResponse: null });
+
   // Intent Progression Tree (after resumeData is declared)
   // Hooks must be called unconditionally, so we always call it
   const buyerName = keycloak.tokenParsed?.name || keycloak.tokenParsed?.preferred_username || "You";
@@ -110,6 +125,10 @@ export default function Intent() {
 
   // Phase 3: Track if Intent Completed email has been sent (prevent duplicates)
   const intentCompletedEmailSentRef = useRef(false);
+  
+  // Track last lifecycle state we fetched actions for (prevent regeneration)
+  // Key format: `${intentId}:${lifecycleState}` to track per intent
+  const actionsFetchedForRef = useRef(new Set());
 
   // Voice Input State
   const [voiceState, setVoiceState] = useState("idle"); // "idle" | "listening" | "transcribing" | "ready"
@@ -484,9 +503,63 @@ export default function Intent() {
     return getIntentSummary();
   }, [voiceConfirmation, decisions, actions, getDecisionContent, getActionContent, getIntentSummary]);
 
+  // Auto-save current session to history when completed (all actions done or lifecycle COMPLETED)
+  const historySavedForSessionRef = useRef(null);
+  useEffect(() => {
+    if (!result?.id) return;
+    const allDone = actions.length > 0 && actions.every((a) => a.outcome === "COMPLETED" || a.outcome === "CONFIRMED");
+    const completed = lifecycleState === "COMPLETED";
+    if (!allDone && !completed) return;
+    const key = `${result.id}-completed`;
+    if (historySavedForSessionRef.current === key) return;
+    historySavedForSessionRef.current = key;
+    setIntentHistory((prev) => {
+      const entry = {
+        intent: result,
+        compliance,
+        decisions,
+        actions,
+        lifecycleState,
+        ragResponse,
+        createdAt: new Date().toISOString(),
+      };
+      return [entry, ...prev.filter((e) => e.intent?.id !== result.id)].slice(0, 50);
+    });
+  }, [result, compliance, decisions, actions, lifecycleState, ragResponse]);
+
+  // Persist intent history: load on mount (per user), save on change, save current on beforeunload/unmount
+  const userId = keycloak.tokenParsed?.sub || "anonymous";
+  useEffect(() => {
+    const loaded = loadIntentHistory(userId);
+    if (loaded.length > 0) setIntentHistory(loaded);
+  }, [userId]);
+  useEffect(() => {
+    latestSessionRef.current = { result, compliance, decisions, actions, lifecycleState, ragResponse };
+  }, [result, compliance, decisions, actions, lifecycleState, ragResponse]);
+  useEffect(() => {
+    saveIntentHistory(userId, intentHistory);
+  }, [userId, intentHistory]);
+  useEffect(() => {
+    const saveCurrent = () => {
+      const { result: r, compliance: c, decisions: d, actions: a, lifecycleState: ls, ragResponse: rag } = latestSessionRef.current;
+      if (r) {
+        const entry = { intent: r, compliance: c, decisions: d, actions: a, lifecycleState: ls, ragResponse: rag, createdAt: new Date().toISOString() };
+        const existing = loadIntentHistory(userId);
+        saveCurrentSessionToHistory(userId, entry, existing);
+      }
+    };
+    const onBeforeUnload = () => saveCurrent();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      saveCurrent();
+    };
+  }, [userId]);
+
   // Define handleAnalyze FIRST before using it in voice recognition useEffect
-  const handleAnalyze = useCallback(async () => {
-    const currentInput = input.trim();
+  // Optional overrideText: when provided (e.g. from "New search" field), use it instead of input
+  const handleAnalyze = useCallback(async (overrideText) => {
+    const currentInput = (overrideText !== undefined && overrideText !== null ? String(overrideText).trim() : input.trim());
     if (!currentInput) {
       setError("Please enter your intent");
       return;
@@ -499,27 +572,239 @@ export default function Intent() {
     setDecisions([]);
     setActions([]);
     setLifecycleState(null);
-        setResumeData(null); // Clear resume data for new intent
-        setRiskResult(null); // Phase 11: Clear risk result
-        setExplainabilityResult(null); // Phase 11: Clear explainability result
-        setEvidenceList([]); // Phase 12: Clear evidence
-        setRagResponse(null); // Phase 14: Clear RAG response
-        intentCompletedEmailSentRef.current = false; // Phase 3: Reset email sent flag for new intent
+    setResumeData(null); // Clear resume data for new intent
+    setRiskResult(null); // Phase 11: Clear risk result
+    setExplainabilityResult(null); // Phase 11: Clear explainability result
+    setEvidenceList([]); // Phase 12: Clear evidence
+    setRagResponse(null); // Phase 14: Clear RAG response
+    intentCompletedEmailSentRef.current = false; // Phase 3: Reset email sent flag for new intent
+    actionsFetchedForRef.current.clear(); // Reset action fetch tracking for new intent
 
     try {
       const tokenParsed = keycloak.tokenParsed;
       const actorId = tokenParsed?.sub || "unknown-user";
       const tenantId = tokenParsed?.realm || "intent-platform";
 
-      // Step 1: Analyze Intent
-      const intent = await analyzeIntent({
-        text: currentInput,
-        tenantId,
-        actorId,
-        industry: "real-estate",
-      });
+      // Check if input contains multiple intents
+      const parsedIntents = parseMultipleIntents(currentInput);
+      
+      if (parsedIntents.length > 1) {
+        // Multiple intents detected - process each separately
+        console.log(`[Multi-Intent] Detected ${parsedIntents.length} intents`);
+        
+        const processedIntents = [];
+        
+        // Process each intent
+        for (let i = 0; i < parsedIntents.length; i++) {
+          const parsed = parsedIntents[i];
+          console.log(`[Multi-Intent] Processing intent ${i + 1}/${parsedIntents.length}: ${parsed.intentType} in ${parsed.location}`);
+          
+          // Create intent payload with extracted info
+          const intentPayload = createIntentPayload(parsed, tenantId, actorId);
+          
+          // Analyze intent with Intent Engine
+          let intent = await analyzeIntent(intentPayload);
+          // Override UNKNOWN/missing type with parsed type (e.g. "Find me a home in Chennai" → BUY_PROPERTY)
+          if (!intent.type || intent.type === "UNKNOWN") {
+            intent = { ...intent, type: parsed.intentType };
+          }
+          // CRITICAL: Ensure parsed location and budget are preserved in intent object
+          if (!intent.payload) intent.payload = {};
+          if (!intent.extractedInfo) intent.extractedInfo = {};
+          intent.payload.location = parsed.location !== "selected location" ? parsed.location : (intent.payload.location || null);
+          intent.payload.budget = parsed.budget || intent.payload.budget || null;
+          intent.extractedInfo.location = parsed.location !== "selected location" ? parsed.location : (intent.extractedInfo.location || null);
+          intent.extractedInfo.city = parsed.location !== "selected location" ? parsed.location : (intent.extractedInfo.city || null);
+          intent.extractedInfo.budget = parsed.budget || intent.extractedInfo.budget || null;
+          
+          // Process compliance, decisions, actions for this intent
+          let complianceResult = null;
+          let decisionsResult = [];
+          let actionsResult = [];
+          let lifecycleStateResult = null;
+          let riskResultLocal = null;
+          let ragResultLocal = null;
+          
+          // Compliance check (for BUY, SELL, RENT)
+          if (intent.type === "BUY_PROPERTY" || intent.type === "SELL_PROPERTY" || intent.type === "RENT_PROPERTY") {
+            try {
+              complianceResult = await checkCompliance(intent);
+              
+              // Email: Compliance result
+              const userEmail = tokenParsed?.email || tokenParsed?.preferred_username || null;
+              if (userEmail && complianceResult) {
+                sendComplianceResultEmail({
+                  userEmail,
+                  compliance: complianceResult,
+                  intentId: intent.id || "unknown",
+                }).catch((emailErr) => {
+                  console.warn(`[Multi-Intent] Email failed for intent ${i + 1}:`, emailErr);
+                });
+              }
+            } catch (err) {
+              console.warn(`[Multi-Intent] Compliance check failed for intent ${i + 1}:`, err);
+            }
+          }
+          
+          // Get decisions when compliance ALLOW or REVIEW (so user sees decisions even if compliance needs review); skip only on DENY for BUY
+          const complianceOk = !complianceResult || complianceResult.decision === "ALLOW" || complianceResult.decision === "REVIEW" || intent.type !== "BUY_PROPERTY";
+          if (complianceOk) {
+            try {
+              const decisionsResponse = await getDecisions(
+                intent,
+                complianceResult?.decision || "ALLOW",
+                []
+              );
+              decisionsResult = decisionsResponse.decisions || [];
+              lifecycleStateResult = decisionsResponse.lifecycleState || "AWAITING_DECISIONS";
+              
+              // Email: Decisions generated
+              const userEmail = tokenParsed?.email || tokenParsed?.preferred_username || null;
+              if (userEmail && decisionsResult.length > 0) {
+                sendDecisionGeneratedEmail({
+                  userEmail,
+                  decisions: decisionsResult,
+                  intentId: intent.id || "unknown",
+                }).catch((emailErr) => {
+                  console.warn(`[Multi-Intent] Email failed for intent ${i + 1}:`, emailErr);
+                });
+              }
+            } catch (err) {
+              console.warn(`[Multi-Intent] Decisions fetch failed for intent ${i + 1}:`, err);
+            }
+          }
+          
+          // Risk evaluation (for BUY intents)
+          if (intent.type === "BUY_PROPERTY") {
+            try {
+              riskResultLocal = await evaluateRisk(intent, complianceResult, decisionsResult);
+            } catch (err) {
+              console.warn(`[Multi-Intent] Risk evaluation failed for intent ${i + 1}:`, err);
+            }
+          }
+          
+          // RAG insights
+          try {
+            const country = determineCountry(intent);
+            ragResultLocal = await queryRAG(intent, country);
+          } catch (err) {
+            console.warn(`[Multi-Intent] RAG query failed for intent ${i + 1}:`, err);
+          }
+          
+          // Get actions if decisions are made
+          if (lifecycleStateResult === "DECISIONS_MADE" || lifecycleStateResult === "ACTIONS_IN_PROGRESS") {
+            try {
+              const actionsResponse = await getActions(intent, decisionsResult, lifecycleStateResult, []);
+              actionsResult = actionsResponse.actions || [];
+              
+              // Track that we fetched actions for this intent
+              const fetchKey = `${intent.id}:${lifecycleStateResult}`;
+              actionsFetchedForRef.current.add(fetchKey);
+            } catch (err) {
+              console.warn(`[Multi-Intent] Actions fetch failed for intent ${i + 1}:`, err);
+            }
+          }
+          
+          // Email: Intent created for each intent
+          const userEmail = tokenParsed?.email || tokenParsed?.preferred_username || null;
+          if (userEmail) {
+            sendIntentCreatedEmail({
+              userEmail,
+              intent,
+              intentId: intent.id || "unknown",
+            }).catch((emailErr) => {
+              console.warn(`[Multi-Intent] Email failed for intent ${i + 1}:`, emailErr);
+            });
+          }
+          
+          processedIntents.push({
+            intent,
+            compliance: complianceResult,
+            decisions: decisionsResult,
+            actions: actionsResult,
+            lifecycleState: lifecycleStateResult,
+            riskResult: riskResultLocal,
+            ragResponse: ragResultLocal,
+            parsedInfo: parsed
+          });
+        }
+        
+        // Store all processed intents
+        setMultipleIntents(processedIntents);
+        setActiveIntentIndex(0);
+        
+        // Set first intent as active
+        const firstIntent = processedIntents[0];
+        setResult(firstIntent.intent);
+        setCompliance(firstIntent.compliance);
+        setDecisions(firstIntent.decisions);
+        setActions(firstIntent.actions);
+        setLifecycleState(firstIntent.lifecycleState);
+        setRiskResult(firstIntent.riskResult);
+        setRagResponse(firstIntent.ragResponse);
+        
+        // Add chat messages about each intent
+        if (addChatMessageRef.current) {
+          addChatMessageRef.current({
+            text: `📋 Processed ${processedIntents.length} intents. Switch between them using the tabs above.`,
+            type: "system",
+            timestamp: new Date().toLocaleString()
+          });
+          
+          // Add summary for each intent
+          processedIntents.forEach((intentData, idx) => {
+            const parsed = intentData.parsedInfo;
+            const intentTypeLabel = parsed.intentType === "BUY_PROPERTY" ? "Buy" : 
+                                   parsed.intentType === "SELL_PROPERTY" ? "Sell" : 
+                                   parsed.intentType === "RENT_PROPERTY" ? "Rent" : "Property";
+            const budgetText = parsed.budget ? `₹${(parsed.budget / 100000).toFixed(0)}L` : "";
+            const decisionsCount = intentData.decisions.length;
+            const actionsCount = intentData.actions.length;
+            
+            addChatMessageRef.current({
+              text: `Intent ${idx + 1}: ${intentTypeLabel} in ${parsed.location}${budgetText ? ` (${budgetText})` : ""} - ${decisionsCount} decisions, ${actionsCount} actions`,
+              type: "intent",
+              timestamp: new Date().toLocaleString()
+            });
+          });
+        }
+        
+        setLoading(false);
+        return; // Exit early for multi-intent flow
+      }
+      
+      // Single intent flow — use parsed type/location/budget so "I want a house in Delhi for 80 lakhs" → BUY_PROPERTY in Delhi ₹80L
+      const parsedSingle = parseMultipleIntents(currentInput);
+      const parsed = parsedSingle.length > 0 ? parsedSingle[0] : null;
+      const intentPayload = parsed
+        ? createIntentPayload(parsed, tenantId, actorId)
+        : { text: currentInput, tenantId, actorId, industry: "real-estate" };
+
+      let intent = await analyzeIntent(intentPayload);
+
+      // Override UNKNOWN/missing type with our parsed type (e.g. "I want a house in Delhi" → BUY_PROPERTY)
+      if (parsed && (!intent.type || intent.type === "UNKNOWN")) {
+        intent = { ...intent, type: parsed.intentType };
+      }
+
+      // CRITICAL: Extract and preserve location/budget for location-specific decisions
+      if (parsed) {
+        if (!intent.payload) intent.payload = {};
+        if (!intent.extractedInfo) intent.extractedInfo = {};
+        if (parsed.location && parsed.location !== "selected location") {
+          intent.payload.location = parsed.location;
+          intent.extractedInfo.location = parsed.location;
+          intent.extractedInfo.city = parsed.location;
+        }
+        if (parsed.budget) {
+          intent.payload.budget = parsed.budget;
+          intent.extractedInfo.budget = parsed.budget;
+        }
+      }
 
       setResult(intent);
+      setMultipleIntents([]); // Clear multi-intent state for single intent
+      setActiveIntentIndex(0);
 
       // Phase 3: Email Trigger 1 - Intent Created/Analyzed
       const userEmail = tokenParsed?.email || tokenParsed?.preferred_username || null;
@@ -543,7 +828,60 @@ export default function Intent() {
 
       // Phase 2: Add intent analysis message to chat
       if (addChatMessageRef.current) {
-        const location = intent.payload?.location || intent.extractedInfo?.location || "Location";
+        // Improved location extraction - check multiple sources including original text
+        let location = intent.payload?.location || 
+                      intent.extractedInfo?.location || 
+                      intent.extractedInfo?.city ||
+                      intent.extractedInfo?.state ||
+                      "";
+        
+        // If location is still empty, try to extract from original user input
+        if (!location || location === "Location" || location.toLowerCase() === "unknown location" || location.toLowerCase().includes("unknown")) {
+          const originalText = intent.text || intent.originalText || "";
+          
+          // First, try to match known Indian city names directly
+          const indianCities = [
+            "mumbai", "bombay", "delhi", "bangalore", "bengaluru", "chennai", "madras",
+            "hyderabad", "pune", "kolkata", "calcutta", "ahmedabad", "surat", "jaipur",
+            "lucknow", "kanpur", "nagpur", "indore", "thane", "bhopal", "visakhapatnam",
+            "vizag", "patna", "vadodara", "ghaziabad", "ludhiana", "agra", "nashik"
+          ];
+          
+          const textLower = originalText.toLowerCase();
+          for (const city of indianCities) {
+            if (textLower.includes(city)) {
+              location = city.charAt(0).toUpperCase() + city.slice(1);
+              break;
+            }
+          }
+          
+          // If still not found, try pattern matching
+          if (!location || location === "Location" || location.toLowerCase() === "unknown location") {
+            const locationPatterns = [
+              /(?:in|at|near|around|for)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+              /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:for|with|at|in)/i
+            ];
+            
+            for (const pattern of locationPatterns) {
+              const match = originalText.match(pattern);
+              if (match && match[1]) {
+                const candidate = match[1].trim();
+                // Filter out common non-location words
+                const nonLocations = ["home", "house", "property", "buy", "purchase", "crore", "lakh", "rupees", "dollars", "budget"];
+                if (!nonLocations.some(word => candidate.toLowerCase().includes(word)) && candidate.length > 2) {
+                  location = candidate;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Final fallback
+        if (!location || location === "Location" || location.toLowerCase() === "unknown location") {
+          location = "selected location";
+        }
+        
         const budget = intent.payload?.budget ? `₹${(intent.payload.budget / 100000).toFixed(0)}L` : "";
         const intentSummary = `Intent: ${intent.type || "Property Search"}${location ? ` in ${location}` : ""}${budget ? ` with budget ${budget}` : ""}`;
         
@@ -608,11 +946,13 @@ export default function Intent() {
         setRagLoading(false);
       }
 
-      // Step 2: Check compliance
-      if (intent.type === "BUY_PROPERTY") {
+      // Step 2: Check compliance (BUY, RENT, SELL)
+      if (intent.type === "BUY_PROPERTY" || intent.type === "RENT_PROPERTY" || intent.type === "SELL_PROPERTY") {
         try {
           const complianceResult = await checkCompliance(intent);
           setCompliance(complianceResult);
+          const decisionKey = (complianceResult.decision || "").toUpperCase();
+          console.log("[Compliance] decision:", complianceResult.decision, "→ normalized:", decisionKey);
 
           // Phase 3: Email Trigger 2 - Compliance Check Result
           if (userEmail) {
@@ -627,10 +967,10 @@ export default function Intent() {
 
           // Phase 2: Add compliance message to chat
           if (addChatMessageRef.current) {
-            const complianceEmoji = complianceResult.decision === "ALLOW" ? "✅" : complianceResult.decision === "DENY" ? "❌" : "⚠️";
-            const complianceText = complianceResult.decision === "ALLOW" 
+            const complianceEmoji = decisionKey === "ALLOW" ? "✅" : decisionKey === "DENY" ? "❌" : "⚠️";
+            const complianceText = decisionKey === "ALLOW" 
               ? "Compliance check passed! You can proceed with your property search."
-              : complianceResult.decision === "DENY"
+              : decisionKey === "DENY"
               ? `Compliance check failed: ${complianceResult.reason || "Not compliant"}`
               : `Compliance review required: ${complianceResult.reason || "Needs review"}`;
             
@@ -641,22 +981,25 @@ export default function Intent() {
             });
           }
 
-          // Step 3: Get decisions if compliance allows
-          if (complianceResult.decision === "ALLOW") {
+          // Step 3: Get decisions when compliance ALLOW or REVIEW (so decisions show even if compliance needs review)
+          if (decisionKey === "ALLOW" || decisionKey === "REVIEW") {
             try {
+              console.log("[Decisions] Fetching decisions (compliance:", decisionKey, ")...");
               const decisionResult = await getDecisions(
                 intent,
-                complianceResult.decision,
+                decisionKey,
                 []
               );
-              setDecisions(decisionResult.decisions || []);
+              const decisionsList = decisionResult.decisions || [];
+              console.log("[Decisions] Received count:", decisionsList.length, decisionResult);
+              setDecisions(decisionsList);
               setLifecycleState(decisionResult.lifecycleState || "AWAITING_DECISIONS");
 
               // Phase 3: Email Trigger 3 - Decision Generated
-              if (userEmail && decisionResult.decisions && decisionResult.decisions.length > 0) {
+              if (userEmail && decisionsList.length > 0) {
                 sendDecisionGeneratedEmail({
                   userEmail,
-                  decisions: decisionResult.decisions,
+                  decisions: decisionsList,
                   intentId: intent.id || "unknown",
                 }).catch((emailErr) => {
                   console.warn("[Email] Failed to send decision generated email:", emailErr);
@@ -664,9 +1007,9 @@ export default function Intent() {
               }
 
               // Phase 2: Add decisions message to chat
-              if (addChatMessageRef.current && decisionResult.decisions && decisionResult.decisions.length > 0) {
-                const decisionsCount = decisionResult.decisions.length;
-                const pendingCount = decisionResult.decisions.filter(d => 
+              if (addChatMessageRef.current && decisionsList.length > 0) {
+                const decisionsCount = decisionsList.length;
+                const pendingCount = decisionsList.filter(d => 
                   d.evolutionState !== "CONFIRMED" && d.state !== "CONFIRMED"
                 ).length;
                 
@@ -682,7 +1025,7 @@ export default function Intent() {
                 const riskEvaluation = await evaluateRisk(
                   intent,
                   complianceResult,
-                  decisionResult.decisions || []
+                  decisionsList
                 );
                 if (riskEvaluation) {
                   setRiskResult(riskEvaluation);
@@ -693,7 +1036,7 @@ export default function Intent() {
                       intent,
                       complianceResult,
                       riskEvaluation,
-                      decisionResult.decisions || []
+                      decisionsList
                     );
                     if (explainabilityResponse) {
                       setExplainabilityResult(explainabilityResponse);
@@ -728,9 +1071,9 @@ export default function Intent() {
                 try {
                   const actionResult = await getActions(
                     intent,
-                    decisionResult.decisions,
+                    decisionsList,
                     decisionResult.lifecycleState,
-                    []
+                    actions  // ✅ Pass existing actions to prevent regeneration
                   );
                   setActions(actionResult.actions || []);
                   if (actionResult.nextLifecycleState) {
@@ -839,12 +1182,29 @@ export default function Intent() {
       };
 
       recognition.onresult = async (event) => {
-        const transcript = event.results[0][0].transcript.trim();
+        // Build full transcript from all results (continuous mode may have multiple segments)
+        let transcript = "";
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += (event.results[i][0]?.transcript || "") + " ";
+        }
+        transcript = transcript.trim();
+        if (!transcript) return;
         console.log("[Speech Recognition] Transcript:", transcript);
-        console.log("[Speech Recognition] Full transcript (for debugging):", JSON.stringify(transcript));
         setVoiceState("transcribing");
         
-        // Phase 13.1: Check if AI Agent Mode is enabled
+        // When no intent exists yet, always treat speech as intent input (e.g. "buy a home in vizag under 50L")
+        if (!result) {
+          setInput(transcript);
+          setVoiceState("idle");
+          setIsListening(false);
+          recognitionRunningRef.current = false;
+          setTimeout(() => {
+            if (handleAnalyzeRef.current) handleAnalyzeRef.current();
+          }, 200);
+          return;
+        }
+        
+        // Phase 13.1: Check if AI Agent Mode is enabled (for post-intent voice commands)
         const savedMode = localStorage.getItem("aiAgentMode") === "true";
         console.log("[Voice Agent] AI Agent Mode enabled:", savedMode);
         
@@ -994,17 +1354,17 @@ export default function Intent() {
                         )
                       );
                       
-                      // If new actions were unlocked, refresh actions
+                      // ❌ DO NOT call getActions() here - it regenerates actions!
+                      // Action Engine handles unlocking internally via updateActionOutcome response
+                      // If response.nextActions exists, add them directly without calling /execute
                       if (response.nextActions && response.nextActions.length > 0) {
-                        const actionResult = await getActions(
-                          result,
-                          decisions,
-                          lifecycleState,
-                          actions.map((a) =>
-                            a.actionId === actionId ? response.action : a
-                          )
-                        );
-                        setActions(actionResult.actions || []);
+                        setActions((prev) => {
+                          const existingIds = new Set(prev.map(a => a.actionId || a.id));
+                          const newActions = response.nextActions.filter(a => 
+                            !existingIds.has(a.actionId || a.id)
+                          );
+                          return [...prev, ...newActions];
+                        });
                       }
                       
                       // Update lifecycle state if provided
@@ -1813,10 +2173,49 @@ export default function Intent() {
           if (generalExplainability) {
             setExplainabilityResult(generalExplainability);
             console.log("[General Insights] Loaded general legal references");
+          } else {
+            // Explainability not available - use fallback
+            setExplainabilityResult({
+              explanation: "General legal references are available through the Compliance Engine.",
+              legalReferences: [],
+              confidence: 0.5,
+            });
+            // Also create a ragResponse fallback so Knowledge-Based Insights show
+            setRagResponse({
+              summary: "General real estate knowledge and legal references are available. Use the Compliance Engine for specific regulatory information.",
+              market_context: {
+                location_insights: "Market insights vary by location. Check local regulations and market trends.",
+                price_trends: "Price trends depend on location, property type, and market conditions.",
+                market_conditions: "Market conditions change frequently. Consult local real estate experts."
+              },
+              risk_signals: [],
+              valuation_hint: {},
+              sources: [],
+              confidence: 0.5
+            });
+            console.log("[General Insights] Using fallback legal references and RAG response (Explainability Engine not available)");
           }
         } catch (explainErr) {
-          console.warn("[General Insights] Could not load general legal references:", explainErr);
-          // Non-blocking - continue even if explainability fails
+          // Non-blocking - use fallback
+          setExplainabilityResult({
+            explanation: "General legal references are available through the Compliance Engine.",
+            legalReferences: [],
+            confidence: 0.5,
+          });
+          // Also create a ragResponse fallback so Knowledge-Based Insights show
+          setRagResponse({
+            summary: "General real estate knowledge and legal references are available. Use the Compliance Engine for specific regulatory information.",
+            market_context: {
+              location_insights: "Market insights vary by location. Check local regulations and market trends.",
+              price_trends: "Price trends depend on location, property type, and market conditions.",
+              market_conditions: "Market conditions change frequently. Consult local real estate experts."
+            },
+            risk_signals: [],
+            valuation_hint: {},
+            sources: [],
+            confidence: 0.5
+          });
+          console.log("[General Insights] Using fallback legal references and RAG response (Explainability Engine error)");
         }
       } catch (err) {
         console.warn("[General Insights] Error loading general insights:", err);
@@ -1967,6 +2366,30 @@ export default function Intent() {
     }
   }, [lifecycleState, result, decisions, actions]); // Only trigger when these change
 
+  // When lifecycle is DECISIONS_MADE and actions are empty, fetch actions once (fallback if handleDecisionSelect didn't)
+  useEffect(() => {
+    if (
+      lifecycleState !== "DECISIONS_MADE" ||
+      !result?.id ||
+      actions.length > 0 ||
+      !decisions?.length
+    ) return;
+    const fetchKey = `${result.id}:DECISIONS_MADE`;
+    if (actionsFetchedForRef.current.has(fetchKey)) return;
+    actionsFetchedForRef.current.add(fetchKey);
+    getActions(result, decisions, lifecycleState, [])
+      .then((actionResult) => {
+        if (actionResult?.actions?.length > 0) {
+          setActions(actionResult.actions);
+          if (actionResult.nextLifecycleState) setLifecycleState(actionResult.nextLifecycleState);
+        }
+      })
+      .catch((err) => {
+        console.warn("[Actions] Fallback fetch after DECISIONS_MADE failed:", err);
+        actionsFetchedForRef.current.delete(fetchKey);
+      });
+  }, [lifecycleState, result, decisions, actions.length]);
+
   // Phase 5.4: Handle decision selection
   const handleDecisionSelect = async (decisionId, optionId, confirm = false) => {
     setLoading(true);
@@ -1977,14 +2400,28 @@ export default function Intent() {
 
       const response = await selectDecision(decisionId, optionId, userId, confirm);
 
+      // Backend may return flat { decisionId, selectedOptionId, evolutionState }; normalize to full decision object
+      const existingDecision = decisions.find((d) => (d.decisionId || d.id) === decisionId);
+      const decisionFromResponse = response.decision ?? {
+        ...existingDecision,
+        decisionId: response.decisionId ?? decisionId,
+        selectedOptionId: response.selectedOptionId ?? optionId,
+        evolutionState: response.evolutionState ?? "SELECTED",
+        type: existingDecision?.type,
+        options: existingDecision?.options,
+      };
+      const effectiveDecision = { ...existingDecision, ...decisionFromResponse };
+
+      // Treat SELECTED or CONFIRMED as "confirmed" for UI (backend returns SELECTED)
+      const isDecisionConfirmed = (effectiveDecision.evolutionState === "CONFIRMED" || effectiveDecision.evolutionState === "SELECTED");
+
       // Phase 2: Add decision confirmation message to chat
-      const isDecisionConfirmed = response.decision.evolutionState === "CONFIRMED";
       if (isDecisionConfirmed && addChatMessageRef.current) {
-        const decisionType = response.decision.type || "Decision";
-        const selectedOption = response.decision.options?.find(opt => opt.id === optionId) || 
-                              response.decision.selectedOption || 
+        const decisionType = effectiveDecision.type || "Decision";
+        const selectedOption = effectiveDecision.options?.find(opt => opt.id === (effectiveDecision.selectedOptionId || optionId)) ||
+                              effectiveDecision.options?.[0] ||
                               { label: optionId };
-        const optionLabel = selectedOption.label || selectedOption.name || optionId;
+        const optionLabel = selectedOption?.label || selectedOption?.name || optionId;
         
         addChatMessageRef.current({
           text: `✅ Decision confirmed: ${decisionType} → ${optionLabel}`,
@@ -1997,7 +2434,7 @@ export default function Intent() {
       let updatedDecisionsList = [];
       setDecisions((prev) => {
         // Update the selected decision
-        const updatedDecisions = prev.map((d) => (d.decisionId === decisionId ? response.decision : d));
+        const updatedDecisions = prev.map((d) => (d.decisionId === decisionId || d.id === decisionId ? effectiveDecision : d));
         
         // Add unlocked decisions (deduplicate by decisionId)
         if (response.unlockedDecisions && response.unlockedDecisions.length > 0) {
@@ -2023,9 +2460,9 @@ export default function Intent() {
         
         updatedDecisionsList = updatedDecisions; // Store for use outside callback
         
-        // Determine lifecycle state from decision states
+        // Determine lifecycle state from decision states (SELECTED counts as confirmed)
         const pendingDecisions = updatedDecisions.filter((d) => d.evolutionState === "PENDING");
-        const confirmedDecisions = updatedDecisions.filter((d) => d.evolutionState === "CONFIRMED");
+        const confirmedDecisions = updatedDecisions.filter((d) => d.evolutionState === "CONFIRMED" || d.evolutionState === "SELECTED");
         
         if (pendingDecisions.length === 0 && confirmedDecisions.length > 0) {
           setLifecycleState("DECISIONS_MADE");
@@ -2036,52 +2473,92 @@ export default function Intent() {
         return updatedDecisions;
       });
 
+      // Compute merged decisions synchronously (don't rely on setDecisions callback - it may run async)
+      const mergedDecisions = decisions.map((d) => (d.decisionId === decisionId || d.id === decisionId ? effectiveDecision : d));
+
       // Phase 3: Email Trigger 4 - Decision Confirmed (Individual)
-      // Moved here after updatedDecisionsList is populated
       if (isDecisionConfirmed) {
         const userEmail = keycloak.tokenParsed?.email || keycloak.tokenParsed?.preferred_username || null;
         if (userEmail) {
           sendDecisionConfirmedEmail({
             userEmail,
-            decision: response.decision,
-            decisions: updatedDecisionsList.length > 0 ? updatedDecisionsList : decisions,
+            decision: effectiveDecision,
+            decisions: mergedDecisions,
             intentId: result?.id || "unknown",
           }).catch((emailErr) => {
             console.warn("[Email] Failed to send decision confirmed email:", emailErr);
           });
         }
+        // Agent Panel: when user selects an agent, create request so it appears on agent dashboard in real time
+        const decisionType = (effectiveDecision.type || "").toUpperCase();
+        const isAgentSelection = decisionType === "AGENT_SELECTION" || decisionType === "SELECT_AGENT";
+        if (isAgentSelection && result) {
+          const agentId = effectiveDecision.selectedOptionId || optionId;
+          if (agentId) {
+            createAgentRequest({
+              agentId,
+              userId: tokenParsed?.sub || "unknown-user",
+              intentId: result.id || "unknown",
+              userDetails: {
+                whatUserWants: result.type || "BUY_PROPERTY",
+                problemDescription: result.text || result.originalText || "",
+                priority: riskResult?.level || "MEDIUM",
+                category: result.type,
+                payload: result.payload || {},
+                extractedInfo: result.extractedInfo || {},
+                complianceStatus: compliance?.decision,
+              },
+              userEmail: userEmail || "",
+            }).catch((err) => {
+              console.warn("[Agent Request] Create failed (non-blocking):", err?.message || err);
+            });
+          }
+        }
       }
 
-      // Fetch actions if:
-      // 1. Actions were unlocked by Decision Engine, OR
-      // 2. Decision was confirmed (evolutionState === "CONFIRMED")
-      // Note: isDecisionConfirmed was already declared above for chat message
+      // Fetch actions when all decisions are confirmed (use merged list so we don't rely on async setState)
+      const decisionsToUse = mergedDecisions;
+      const pendingDecisions = decisionsToUse.filter((d) => d.evolutionState === "PENDING");
+      const confirmedDecisions = decisionsToUse.filter((d) => d.evolutionState === "CONFIRMED" || d.evolutionState === "SELECTED");
+      const currentLifecycleState = (pendingDecisions.length === 0 && confirmedDecisions.length > 0)
+        ? "DECISIONS_MADE"
+        : lifecycleState;
+      
+      // ✅ CRITICAL: Only fetch actions if lifecycle state changed OR we don't have actions
+      // This prevents regeneration when clicking decisions multiple times
+      const lifecycleChanged = currentLifecycleState !== lifecycleState;
+      const intentId = result?.id || "unknown";
+      
+      // Create unique key for this intent + lifecycle state combination
+      const fetchKey = `${intentId}:${currentLifecycleState}`;
+      
+      // Check if we've already fetched for this exact combination
+      // OR if we already have actions in state (prevent regeneration)
+      const alreadyFetched = actionsFetchedForRef.current.has(fetchKey);
+      const hasActions = actions.length > 0;
+      
       const shouldFetchActions = 
-        (response.unlockedActions && response.unlockedActions.length > 0) ||
-        isDecisionConfirmed;
+        !alreadyFetched && !hasActions && (
+          (response.unlockedActions && response.unlockedActions.length > 0) ||
+          (isDecisionConfirmed && lifecycleChanged && currentLifecycleState === "DECISIONS_MADE") ||
+          (isDecisionConfirmed && currentLifecycleState === "DECISIONS_MADE")
+        );
 
       if (shouldFetchActions) {
-        // Use the updated decisions list
-        const decisionsToUse = updatedDecisionsList.length > 0 ? updatedDecisionsList : decisions.map((d) => (d.decisionId === decisionId ? response.decision : d));
-        
-        // Determine lifecycle state for action fetch
-        const pendingDecisions = decisionsToUse.filter((d) => d.evolutionState === "PENDING");
-        const confirmedDecisions = decisionsToUse.filter((d) => d.evolutionState === "CONFIRMED");
-        const currentLifecycleState = (pendingDecisions.length === 0 && confirmedDecisions.length > 0) 
-          ? "DECISIONS_MADE" 
-          : lifecycleState;
+        // ✅ CRITICAL: Mark as fetched BEFORE calling getActions to prevent race conditions
+        actionsFetchedForRef.current.add(fetchKey);
         
         try {
-          console.log("[Decision Select] Fetching actions, lifecycleState:", currentLifecycleState, "decisions:", decisionsToUse.length);
+          console.log("[Decision Select] Fetching actions, lifecycleState:", currentLifecycleState, "decisions:", decisionsToUse.length, "existingActions:", actions.length, "fetchKey:", fetchKey);
           const actionResult = await getActions(
             result,
             decisionsToUse,
             currentLifecycleState,
-            actions
+            actions  // ✅ Always pass existing actions to prevent regeneration
           );
           console.log("[Decision Select] Actions received:", actionResult.actions?.length || 0);
           
-          // Only update if we got actions back, or if lifecycle state changed
+          // Only update if we got actions back
           if (actionResult.actions && actionResult.actions.length > 0) {
             setActions(actionResult.actions);
           } else if (actionResult.actions && actionResult.actions.length === 0 && actions.length > 0) {
@@ -2089,7 +2566,7 @@ export default function Intent() {
             console.warn("[Decision Select] Engine returned empty actions, keeping existing");
           } else {
             // Only clear if we explicitly got empty array and had none before
-            setActions(actionResult.actions || []);
+          setActions(actionResult.actions || []);
           }
           
           if (actionResult.nextLifecycleState) {
@@ -2097,20 +2574,25 @@ export default function Intent() {
           }
         } catch (actionErr) {
           console.error("[Decision Select] Action engine error:", actionErr);
-          // Non-blocking - actions might not be available yet
-          // Keep existing actions if available
+          actionsFetchedForRef.current.delete(fetchKey);
           if (actions.length === 0) {
             console.warn("[Decision Select] No actions available, keeping empty state");
           }
+        }
+      } else {
+        if (alreadyFetched) {
+          console.log("[Decision Select] Skipping action fetch - already fetched for:", fetchKey);
+        } else if (hasActions) {
+          console.log("[Decision Select] Skipping action fetch - actions already exist:", actions.length);
+        } else {
+          console.log("[Decision Select] Skipping action fetch - conditions not met");
         }
       }
 
       // Email Automation: Send initial confirmation email when all 4 decisions are confirmed
       // Agent, Lender, Property, Down Payment
       if (confirm && isDecisionConfirmed) {
-        const updatedDecisionsForEmail = updatedDecisionsList.length > 0 
-          ? updatedDecisionsList 
-          : decisions.map((d) => (d.decisionId === decisionId ? response.decision : d));
+        const updatedDecisionsForEmail = mergedDecisions;
         
         if (areAllDecisionsConfirmed(updatedDecisionsForEmail)) {
           const decisionValues = extractDecisionValues(updatedDecisionsForEmail);
@@ -2139,22 +2621,27 @@ export default function Intent() {
     }
   };
 
+  // Confirm all decisions sequentially so each setDecisions sees the previous update
+  const handleConfirmAll = async (list) => {
+    if (!list?.length) return;
+    for (const { decisionId, optionId } of list) {
+      await handleDecisionSelect(decisionId, optionId, true);
+    }
+  };
+
   // Phase 5.4: Handle decision change (with reason)
   const handleDecisionChangeClick = (decision, newOptionId) => {
-    const decisionState = decision.originalDecision?.evolutionState || decision.originalDecision?.state;
+    const decisionState = decision.originalDecision?.evolutionState || decision.originalDecision?.state || decision.evolutionState;
     
     // For pending decisions, allow changing the option (user can then accept the new option)
-    // For confirmed decisions, use the changeDecision API
+    // For confirmed or selected decisions, open change modal (reason required for CONFIRMED/SELECTED when using change API)
     if (decisionState === "PENDING" || !decisionState) {
-      // For pending decisions, just open modal to select different option
-      // User will then accept the new option
       setDecisionToChange(decision);
       setNewOptionForChange(newOptionId || null);
-      setChangeReason(""); // Not required for pending decisions
+      setChangeReason("");
       setError(null);
       setShowChangeModal(true);
-    } else if (decisionState === "CONFIRMED") {
-      // For confirmed decisions, require reason for audit
+    } else if (decisionState === "CONFIRMED" || decisionState === "SELECTED") {
       setDecisionToChange(decision);
       setNewOptionForChange(newOptionId || null);
       setChangeReason("");
@@ -2206,14 +2693,14 @@ export default function Intent() {
       return;
     }
 
-    // For confirmed decisions, require reason and use changeDecision API
+    // For confirmed/selected decisions, require reason and use changeDecision API
     if (!changeReason.trim()) {
       setError("Change reason is required for confirmed decisions");
       return;
     }
     
-    if (decisionState !== "CONFIRMED") {
-      const errorMsg = `Cannot change decision. Decision must be CONFIRMED first. Current state: ${decisionState || "UNKNOWN"}. Please accept the decision first before changing it.`;
+    if (decisionState !== "CONFIRMED" && decisionState !== "SELECTED") {
+      const errorMsg = `Cannot change decision. Decision must be CONFIRMED or SELECTED. Current state: ${decisionState || "UNKNOWN"}.`;
       setError(errorMsg);
       console.error("Decision change validation failed:", {
         decisionState,
@@ -2301,6 +2788,10 @@ export default function Intent() {
   };
 
   const handleActionOutcomeConfirm = async () => {
+    if (!actionForOutcome) {
+      setError("No action selected. Please close and try again.");
+      return;
+    }
     // Validate required fields based on outcome type
     if (
       (outcomeType === "FAILED" || outcomeType === "BLOCKED" || outcomeType === "RESCHEDULED") &&
@@ -2321,27 +2812,46 @@ export default function Intent() {
       const tokenParsed = keycloak.tokenParsed;
       const userId = tokenParsed?.sub || "unknown-user";
 
+      // Get actionId - could be actionId or id field
+      const actionId = actionForOutcome.actionId || actionForOutcome.id;
+      if (!actionId) {
+        throw new Error("Action ID not found in action object");
+      }
+      
+      console.log("[Action Outcome] Updating action:", {
+        actionId,
+        outcome: outcomeType,
+        actionObject: actionForOutcome
+      });
+
       const response = await updateActionOutcome(
-        actionForOutcome.actionId,
+        actionId,
         outcomeType,
         userId,
         outcomeReason || null,
         scheduledFor || null
       );
 
-      // Update the action
-      const updatedAction = response.action;
+      // Update the action: backend may return response.action or a different shape; fallback to merging outcome into current action
+      const updatedAction = response?.action ?? {
+        ...actionForOutcome,
+        actionId: actionForOutcome.actionId || actionForOutcome.id,
+        id: actionForOutcome.id || actionForOutcome.actionId,
+        outcome: outcomeType,
+        description: actionForOutcome.description,
+      };
       console.log("[Action Outcome] Action updated:", {
-        actionId: updatedAction.actionId,
-        outcome: updatedAction.outcome,
-        description: updatedAction.description
+        actionId: updatedAction?.actionId ?? updatedAction?.id ?? actionId,
+        outcome: updatedAction?.outcome ?? outcomeType,
+        description: updatedAction?.description,
       });
       
       // Update the action in state immediately
       setActions((prev) => {
-        const updated = prev.map((a) =>
-          a.actionId === actionForOutcome.actionId ? updatedAction : a
-        );
+        const updated = prev.map((a) => {
+          const aId = a.actionId || a.id;
+          return (aId === actionId) ? updatedAction : a;
+        });
         console.log("[Action Outcome] Actions state updated:", updated.length, "actions");
         return updated;
       });
@@ -2363,147 +2873,37 @@ export default function Intent() {
         });
       }
 
-      // Sequential Action Flow: If action completed/confirmed, unlock next action
-      // "Okati tharuvatha okati" - one after another
-      if (outcomeType === "COMPLETED" || outcomeType === "CONFIRMED") {
-        // Update local state first with the completed action
-        const updatedActionsList = actions.map((a) =>
-          a.actionId === actionForOutcome.actionId ? updatedAction : a
-        );
-        
-        // Refresh actions to get next unlocked action
-        try {
-          const actionResult = await getActions(
-            result,
-            decisions,
-            lifecycleState,
-            updatedActionsList
+      // ❌ DO NOT call getActions() after updateActionOutcome - it regenerates actions!
+      // Action Engine handles sequential unlocking internally via updateActionOutcome response
+      // If response.nextActions exists, add them directly without calling /execute
+      
+      // Handle newly unlocked actions (for any outcome type)
+      if (response?.nextActions && response.nextActions.length > 0) {
+        console.log("[Action Flow] Adding newly unlocked actions from response:", response.nextActions.length);
+        setActions((prev) => {
+          const existingIds = new Set(prev.map(a => a.actionId || a.id));
+          const newActions = response.nextActions.filter(a => 
+            !existingIds.has(a?.actionId || a?.id)
           );
-          
-          // Merge new actions with existing ones, preserving completed actions
-          if (actionResult.actions && actionResult.actions.length > 0) {
-            console.log("[Action Flow] Merging actions after completion:", {
-              existing: updatedActionsList.length,
-              new: actionResult.actions.length
-            });
-            
-            // Create a map of existing actions by ID
-            const existingActionsMap = new Map();
-            updatedActionsList.forEach(a => {
-              const id = a.actionId || a.id;
-              existingActionsMap.set(id, a);
-            });
-            
-            // Merge: update existing actions or add new ones
-            actionResult.actions.forEach(newAction => {
-              const id = newAction.actionId || newAction.id;
-              const existing = existingActionsMap.get(id);
-              
-              // If action exists, only update if new one has a different outcome or is more recent
-              if (existing) {
-                const existingIsCompleted = existing.outcome === "COMPLETED" || existing.outcome === "CONFIRMED";
-                const newIsCompleted = newAction.outcome === "COMPLETED" || newAction.outcome === "CONFIRMED";
-                
-                // Don't overwrite completed actions with pending ones
-                if (existingIsCompleted && !newIsCompleted) {
-                  // Keep existing completed action
-                  return;
-                }
-                // Update if new one is completed or has more recent data
-                existingActionsMap.set(id, newAction);
-              } else {
-                // New action - add it
-                existingActionsMap.set(id, newAction);
-              }
-            });
-            
-            // Convert back to array and sort
-            const mergedActions = Array.from(existingActionsMap.values()).sort((a, b) => {
-              const orderA = a.order || a.sequence || 999;
-              const orderB = b.order || b.sequence || 999;
-              return orderA - orderB;
-            });
-            
-            console.log("[Action Flow] Final merged actions:", mergedActions.length);
-            setActions(mergedActions);
-            
-            if (actionResult.nextLifecycleState) {
-              setLifecycleState(actionResult.nextLifecycleState);
-            }
-          } else {
-            // No new actions, but keep the updated action in state
-            console.log("[Action Flow] No new actions, keeping updated action state");
-            setActions(updatedActionsList);
-          }
-        } catch (actionErr) {
-          console.warn("[Action Flow] Failed to refresh actions for sequential unlock:", actionErr);
-          // Keep the updated action in state even if refresh fails
-          setActions(updatedActionsList);
-        }
-      } else if (response.nextActions && response.nextActions.length > 0) {
-        // If new actions were unlocked (non-sequential case)
-        const updatedActionsList = actions.map((a) =>
-          a.actionId === actionForOutcome.actionId ? updatedAction : a
-        );
-        
-        try {
-          const actionResult = await getActions(
-            result,
-            decisions,
-            lifecycleState,
-            updatedActionsList
-          );
-          
-          // Merge actions same way as above
-          if (actionResult.actions && actionResult.actions.length > 0) {
-            const existingActionsMap = new Map();
-            updatedActionsList.forEach(a => {
-              const id = a.actionId || a.id;
-              existingActionsMap.set(id, a);
-            });
-            
-            actionResult.actions.forEach(newAction => {
-              const id = newAction.actionId || newAction.id;
-              existingActionsMap.set(id, newAction);
-            });
-            
-            const mergedActions = Array.from(existingActionsMap.values()).sort((a, b) => {
-              const orderA = a.order || a.sequence || 999;
-              const orderB = b.order || b.sequence || 999;
-              return orderA - orderB;
-            });
-            
-            setActions(mergedActions);
-          } else {
-            setActions(updatedActionsList);
-          }
-        } catch (actionErr) {
-          console.warn("[Action Flow] Failed to refresh actions:", actionErr);
-          setActions(updatedActionsList);
-        }
-      } else {
-        // No sequential unlock needed, just update the action
-        setActions((prev) =>
-          prev.map((a) =>
-            a.actionId === actionForOutcome.actionId ? updatedAction : a
-          )
-        );
+          return [...prev, ...newActions];
+        });
       }
-
-      // Update lifecycle state if provided
-      if (response.intentStatus) {
+      
+      // Update lifecycle state if provided by Action Engine
+      if (response?.intentStatus) {
         setLifecycleState(response.intentStatus);
       }
       
       // Phase 3: Email Trigger 9 - Intent Completed (when lifecycle becomes COMPLETED)
-      if (response.intentStatus === "COMPLETED") {
+      if (response?.intentStatus === "COMPLETED") {
         const userEmail = keycloak.tokenParsed?.email || keycloak.tokenParsed?.preferred_username || null;
         if (userEmail && result) {
+          const effectiveActionId = updatedAction?.actionId ?? updatedAction?.id ?? actionId;
           sendIntentCompletedEmail({
             userEmail,
             intent: result,
             decisions,
-            actions: actions.map(a => a.actionId === actionForOutcome.actionId ? updatedAction : a),
+            actions: actions.map(a => (a.actionId || a.id) === effectiveActionId ? updatedAction : a),
             intentId: result.id || "unknown",
           }).catch((emailErr) => {
             console.warn("[Email] Failed to send intent completed email:", emailErr);
@@ -2517,27 +2917,69 @@ export default function Intent() {
       setActionForOutcome(null);
       setOutcomeType(null);
     } catch (err) {
+      // ✅ FIXED: Remove retry logic - if action not found, show error and ask user to refresh
+      // DO NOT auto-refetch or retry - this causes regeneration
+      if (err.message && err.message.includes("not found")) {
+        setError("This action is no longer valid. The action list may have been updated. Please refresh the page to see the latest actions.");
+        console.error("[Action Outcome] Action not found - user must refresh page:", err.message);
+      } else {
       setError(err.message || "Failed to update action outcome");
       console.error("Action outcome error:", err);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Phase 5.4: Handle start new intent (dismiss resume)
+  // Phase 5.4: Handle start new intent (dismiss resume); save current session to history first
   const handleStartNew = () => {
+    if (result) {
+      setIntentHistory((prev) => {
+        const entry = {
+          intent: result,
+          compliance,
+          decisions,
+          actions,
+          lifecycleState,
+          ragResponse,
+          createdAt: new Date().toISOString(),
+        };
+        const next = [entry, ...prev].slice(0, 50);
+        return next;
+      });
+    }
     setResult(null);
     setCompliance(null);
     setDecisions([]);
     setActions([]);
     setLifecycleState(null);
     setResumeData(null);
+    setRagResponse(null);
     setInput("");
     setError(null);
-    setRiskResult(null); // Phase 11: Clear risk result
-    setExplainabilityResult(null); // Phase 11: Clear explainability result
-    setEvidenceList([]); // Phase 12: Clear evidence
+    setRiskResult(null);
+    setExplainabilityResult(null);
+    setEvidenceList([]);
   };
+
+  // Restore a session from History so user can view or change it
+  const handleSelectFromHistory = useCallback((entry) => {
+    if (!entry?.intent) return;
+    setResult(entry.intent);
+    setCompliance(entry.compliance ?? null);
+    setDecisions(entry.decisions ?? []);
+    setActions(entry.actions ?? []);
+    setLifecycleState(entry.lifecycleState ?? null);
+    setRagResponse(entry.ragResponse ?? null);
+    const intent = entry.intent;
+    setInput(intent?.payload?.originalText || intent?.text || "");
+    setError(null);
+  }, []);
+
+  // Remove one entry from history (persistence is synced via useEffect)
+  const handleDeleteFromHistory = useCallback((entry) => {
+    setIntentHistory((prev) => prev.filter((e) => (e.createdAt !== entry.createdAt) || (e.intent?.id !== entry.intent?.id)));
+  }, []);
 
   // Phase 12: Fetch evidence for Audit Trail
   const fetchEvidence = async (intentId) => {
@@ -2683,8 +3125,120 @@ export default function Intent() {
   // Main UI - Living Space Layout (PHASE 1: UI Integration)
   // Always use LivingSpaceLayout - it handles loading, empty, and active states
   // All engines remain unchanged - only UI wrapper replaced
+  // Handler to switch between multiple intents
+  const handleSwitchIntent = useCallback((index) => {
+    if (multipleIntents.length > 0 && index >= 0 && index < multipleIntents.length) {
+      setActiveIntentIndex(index);
+      const selectedIntent = multipleIntents[index];
+      setResult(selectedIntent.intent);
+      setCompliance(selectedIntent.compliance);
+      setDecisions(selectedIntent.decisions);
+      setActions(selectedIntent.actions);
+      setLifecycleState(selectedIntent.lifecycleState);
+      setRiskResult(selectedIntent.riskResult);
+      setRagResponse(selectedIntent.ragResponse);
+      
+      // Update action fetch tracking for this intent
+      actionsFetchedForRef.current.clear();
+      if (selectedIntent.lifecycleState === "DECISIONS_MADE" || selectedIntent.lifecycleState === "ACTIONS_IN_PROGRESS") {
+        const fetchKey = `${selectedIntent.intent.id}:${selectedIntent.lifecycleState}`;
+        actionsFetchedForRef.current.add(fetchKey);
+      }
+      
+      // Add chat message about switching
+      if (addChatMessageRef.current) {
+        const parsed = selectedIntent.parsedInfo;
+        addChatMessageRef.current({
+          text: `Switched to Intent ${index + 1}: ${parsed.intentType} in ${parsed.location}`,
+          type: "system",
+          timestamp: new Date().toLocaleString()
+        });
+      }
+    }
+  }, [multipleIntents]);
+
+  // Sir integration: Buyer vs Investor routing, refinement, loan, ROI, Trust Receipt
+  const routeModelVal = useMemo(() => routeModel(input, result), [input, result]);
+  const confidence = useMemo(() => (result ? calibrateConfidence(result) : 0), [result]);
+  const refinementPrompt = useMemo(() => (result ? getRefinementPrompt(result) : null), [result]);
+  const loanOptions = useMemo(() => (result ? matchBanks(result) : []), [result]);
+  const roiData = useMemo(
+    () => (result && routeModelVal === "investor" ? calculateROI(result) : null),
+    [result, routeModelVal]
+  );
+  const trustReceipt = useMemo(
+    () =>
+      result
+        ? generateTrustReceipt(result, compliance, {
+            loans: loanOptions,
+            roi: roiData,
+            routeModel: routeModelVal,
+          })
+        : null,
+    [result, compliance, loanOptions, roiData, routeModelVal]
+  );
+
   return (
     <>
+      {/* Multi-Intent Tab Switcher */}
+      {multipleIntents.length > 1 && (
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 1000,
+          backgroundColor: "#FFFFFF",
+          borderBottom: "2px solid #DDE1E3",
+          padding: "12px 20px",
+          display: "flex",
+          gap: "8px",
+          flexWrap: "wrap",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+        }}>
+          <div style={{ fontWeight: 600, color: "#51697A", marginRight: "8px", alignSelf: "center" }}>
+            Multiple Intents ({multipleIntents.length}):
+          </div>
+          {multipleIntents.map((intentData, index) => {
+            const parsed = intentData.parsedInfo;
+            const isActive = index === activeIntentIndex;
+            const intentTypeLabel = parsed.intentType === "BUY_PROPERTY" ? "Buy" : 
+                                   parsed.intentType === "SELL_PROPERTY" ? "Sell" : 
+                                   parsed.intentType === "RENT_PROPERTY" ? "Rent" : "Property";
+            const budgetText = parsed.budget ? `₹${(parsed.budget / 100000).toFixed(0)}L` : "";
+            
+            return (
+              <button
+                key={index}
+                onClick={() => handleSwitchIntent(index)}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: isActive ? "#003152" : "#F4FCFD",
+                  color: isActive ? "#FFFFFF" : "#003152",
+                  border: `1px solid ${isActive ? "#003152" : "#DDE1E3"}`,
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontWeight: isActive ? 600 : 500,
+                  fontSize: "13px",
+                  transition: "all 0.2s",
+                  whiteSpace: "nowrap"
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = "#DDE1E3";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.backgroundColor = "#F4FCFD";
+                  }
+                }}
+              >
+                {index + 1}. {intentTypeLabel} {parsed.location}{budgetText ? ` (${budgetText})` : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      
       <LivingSpaceLayout
         // Engine Data (unchanged)
         result={result}
@@ -2698,6 +3252,7 @@ export default function Intent() {
         // Engine Handlers (unchanged)
         onAnalyze={handleAnalyze}
         onDecisionSelect={(decisionId, optionId, confirm) => handleDecisionSelect(decisionId, optionId, confirm)}
+        onConfirmAll={handleConfirmAll}
         onActionOutcome={(action, outcome) => handleActionOutcomeClick(action, outcome)}
         onDecisionChangeClick={handleDecisionChangeClick}
         onVoiceClick={handleVoiceClick}
@@ -2709,10 +3264,21 @@ export default function Intent() {
         setInput={setInput}
         loading={loading}
         error={error}
+        // Sir integration: refinement, loan, ROI, route, Trust Receipt, confidence
+        refinementPrompt={refinementPrompt}
+        loanOptions={loanOptions}
+        roi={roiData}
+        routeModel={routeModelVal}
+        trustReceipt={trustReceipt}
+        confidence={confidence}
+        intentHistory={intentHistory}
+        onSelectFromHistory={handleSelectFromHistory}
+        onDeleteFromHistory={handleDeleteFromHistory}
+        onStartNew={handleStartNew}
       />
 
-      {/* Phase 5.4: Decision Change Modal */}
-      {showChangeModal && decisionToChange && (
+        {/* Phase 5.4: Decision Change Modal */}
+        {showChangeModal && decisionToChange && (
           <div
             style={{
               position: "fixed",
@@ -2730,23 +3296,23 @@ export default function Intent() {
           >
             <div
               style={{
-                backgroundColor: "#FAFBFC",
+                backgroundColor: "#F4FCFD",
                 padding: 30,
                 borderRadius: 12,
-                border: "1px solid #D1D5DB",
+                border: "1px solid #DDE1E3",
                 width: 500,
                 maxWidth: "90%",
                 boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ marginTop: 0, color: "#111827" }}>Change Decision</h3>
+              <h3 style={{ marginTop: 0, color: "#003152" }}>Change Decision</h3>
               {(() => {
                 const decisionState = decisionToChange?.originalDecision?.evolutionState || decisionToChange?.originalDecision?.state;
                 const isPending = decisionState === "PENDING" || !decisionState;
                 return (
                   <>
-                    <p style={{ color: "#4B5563", marginBottom: 20 }}>
+              <p style={{ color: "#51697A", marginBottom: 20 }}>
                       {isPending 
                         ? "Select a different option. You can then accept this new option."
                         : "Select a new option and provide a reason for changing this confirmed decision."}
@@ -2755,7 +3321,7 @@ export default function Intent() {
                     {/* New Option Selection */}
                     {decisionToChange?.originalDecision?.options && decisionToChange.originalDecision.options.length > 0 && (
                       <div style={{ marginBottom: 15 }}>
-                        <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#111827" }}>
+                        <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#003152" }}>
                           Select New Option (Required):
                         </label>
                         <select
@@ -2765,10 +3331,10 @@ export default function Intent() {
                             width: "100%",
                             padding: 10,
                             borderRadius: 8,
-                            border: "1px solid #D1D5DB",
+                            border: "1px solid #DDE1E3",
                             fontSize: 14,
                             background: "#FFFFFF",
-                            color: "#111827",
+                            color: "#003152",
                           }}
                         >
                           <option value="">-- Select an option --</option>
@@ -2786,26 +3352,26 @@ export default function Intent() {
 
                     {/* Reason field - only required for confirmed decisions */}
                     {!isPending && (
-                      <div style={{ marginBottom: 15 }}>
-                        <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#111827" }}>
-                          Reason for Change (Required):
-                        </label>
-                        <textarea
-                          value={changeReason}
-                          onChange={(e) => setChangeReason(e.target.value)}
-                          placeholder="Please explain why you are changing this decision..."
-                          rows={4}
-                          style={{
-                            width: "100%",
-                            padding: 10,
-                            borderRadius: 8,
-                            border: "1px solid #D1D5DB",
-                            fontSize: 14,
-                            background: "#FFFFFF",
-                            color: "#111827",
-                          }}
-                        />
-                      </div>
+              <div style={{ marginBottom: 15 }}>
+                <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#003152" }}>
+                  Reason for Change (Required):
+                </label>
+                <textarea
+                  value={changeReason}
+                  onChange={(e) => setChangeReason(e.target.value)}
+                  placeholder="Please explain why you are changing this decision..."
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "1px solid #DDE1E3",
+                    fontSize: 14,
+                    background: "#FFFFFF",
+                    color: "#003152",
+                  }}
+                />
+              </div>
                     )}
                   </>
                 );
@@ -2835,60 +3401,60 @@ export default function Intent() {
                   : !changeReason.trim() || !newOptionForChange || loading;
                 
                 return (
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                    <button
-                      onClick={() => {
-                        setShowChangeModal(false);
-                        setChangeReason("");
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  onClick={() => {
+                    setShowChangeModal(false);
+                    setChangeReason("");
                         setNewOptionForChange(null);
                         setError(null);
-                      }}
-                      style={{
-                        padding: "10px 20px",
-                        backgroundColor: "#FFFFFF",
-                        color: "#111827",
-                        border: "1px solid #111827",
-                        borderRadius: 8,
-                        cursor: "pointer",
-                        fontWeight: 600,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = "#111827";
-                        e.currentTarget.style.color = "#FFFFFF";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = "#FFFFFF";
-                        e.currentTarget.style.color = "#111827";
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleDecisionChangeConfirm}
+                  }}
+                  style={{
+                    padding: "10px 20px",
+                    backgroundColor: "#FFFFFF",
+                    color: "#003152",
+                    border: "1px solid #003152",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#003152";
+                    e.currentTarget.style.color = "#FFFFFF";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "#FFFFFF";
+                    e.currentTarget.style.color = "#003152";
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDecisionChangeConfirm}
                       disabled={isDisabled}
-                      style={{
-                        padding: "10px 20px",
-                        backgroundColor: isValid ? "#111827" : "#9CA3AF",
-                        color: "#FFFFFF",
-                        border: "none",
-                        borderRadius: 8,
+                  style={{
+                    padding: "10px 20px",
+                        backgroundColor: isValid ? "#003152" : "#9CA3AF",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: 8,
                         cursor: isValid ? "pointer" : "not-allowed",
-                        fontWeight: 600,
-                      }}
-                      onMouseEnter={(e) => {
+                    fontWeight: 600,
+                  }}
+                  onMouseEnter={(e) => {
                         if (isValid) {
-                          e.currentTarget.style.backgroundColor = "#000000";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "#000000";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
                         if (isValid) {
-                          e.currentTarget.style.backgroundColor = "#111827";
-                        }
-                      }}
-                    >
+                      e.currentTarget.style.backgroundColor = "#003152";
+                    }
+                  }}
+                >
                       {isPending ? "Select & Accept" : "Confirm Change"}
-                    </button>
-                  </div>
+                </button>
+              </div>
                 );
               })()}
             </div>
@@ -2914,29 +3480,29 @@ export default function Intent() {
           >
             <div
               style={{
-                backgroundColor: "#FAFBFC",
+                backgroundColor: "#F4FCFD",
                 padding: 30,
                 borderRadius: 12,
-                border: "1px solid #D1D5DB",
+                border: "1px solid #DDE1E3",
                 width: 500,
                 maxWidth: "90%",
                 boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ marginTop: 0, color: "#111827" }}>Update Action Outcome</h3>
-              <p style={{ color: "#4B5563", marginBottom: 20 }}>
-                Action: <strong style={{ color: "#111827" }}>{actionForOutcome.description}</strong>
+              <h3 style={{ marginTop: 0, color: "#003152" }}>Update Action Outcome</h3>
+              <p style={{ color: "#51697A", marginBottom: 20 }}>
+                Action: <strong style={{ color: "#003152" }}>{actionForOutcome.description}</strong>
               </p>
-              <p style={{ color: "#4B5563", marginBottom: 20 }}>
-                Outcome: <strong style={{ color: "#111827" }}>{outcomeType}</strong>
+              <p style={{ color: "#51697A", marginBottom: 20 }}>
+                Outcome: <strong style={{ color: "#003152" }}>{outcomeType}</strong>
               </p>
 
               {(outcomeType === "FAILED" ||
                 outcomeType === "BLOCKED" ||
                 outcomeType === "RESCHEDULED") && (
                 <div style={{ marginBottom: 15 }}>
-                  <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#111827" }}>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#003152" }}>
                     Reason (Required):
                   </label>
                   <textarea
@@ -2948,10 +3514,10 @@ export default function Intent() {
                       width: "100%",
                       padding: 10,
                       borderRadius: 8,
-                      border: "1px solid #D1D5DB",
+                      border: "1px solid #DDE1E3",
                       fontSize: 14,
                       background: "#FFFFFF",
-                      color: "#111827",
+                      color: "#003152",
                     }}
                   />
                 </div>
@@ -2959,7 +3525,7 @@ export default function Intent() {
 
               {outcomeType === "RESCHEDULED" && (
                 <div style={{ marginBottom: 15 }}>
-                  <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#111827" }}>
+                  <label style={{ display: "block", marginBottom: 8, fontWeight: 700, color: "#003152" }}>
                     Scheduled For (Required):
                   </label>
                   <input
@@ -2970,10 +3536,10 @@ export default function Intent() {
                       width: "100%",
                       padding: 10,
                       borderRadius: 8,
-                      border: "1px solid #D1D5DB",
+                      border: "1px solid #DDE1E3",
                       fontSize: 14,
                       background: "#FFFFFF",
-                      color: "#111827",
+                      color: "#003152",
                     }}
                   />
                 </div>
@@ -2989,19 +3555,19 @@ export default function Intent() {
                   style={{
                     padding: "10px 20px",
                     backgroundColor: "#FFFFFF",
-                    color: "#111827",
-                    border: "1px solid #111827",
+                    color: "#003152",
+                    border: "1px solid #003152",
                     borderRadius: 8,
                     cursor: "pointer",
                     fontWeight: 600,
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = "#111827";
+                    e.currentTarget.style.backgroundColor = "#003152";
                     e.currentTarget.style.color = "#FFFFFF";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = "#FFFFFF";
-                    e.currentTarget.style.color = "#111827";
+                    e.currentTarget.style.color = "#003152";
                   }}
                 >
                   Cancel
@@ -3027,7 +3593,7 @@ export default function Intent() {
                           !outcomeReason.trim()) ||
                         (outcomeType === "RESCHEDULED" && !scheduledFor)
                       )
-                        ? "#111827"
+                        ? "#003152"
                         : "#9CA3AF",
                     color: "#FFFFFF",
                     border: "none",
@@ -3070,7 +3636,7 @@ export default function Intent() {
                         (outcomeType === "RESCHEDULED" && !scheduledFor)
                       )
                     ) {
-                      e.currentTarget.style.backgroundColor = "#111827";
+                      e.currentTarget.style.backgroundColor = "#003152";
                     }
                   }}
                 >

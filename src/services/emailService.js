@@ -7,7 +7,8 @@
  * - Initial confirmation email when all 4 decisions are made
  */
 
-const EMAIL_SERVICE_URL = import.meta.env.VITE_EMAIL_SERVICE_URL || "http://localhost:7008";
+// In dev, use /api/email so Vite proxies to email service (localhost:7008). Set VITE_EMAIL_SERVICE_URL to override.
+const EMAIL_SERVICE_URL = import.meta.env.VITE_EMAIL_SERVICE_URL || "/api/email";
 
 /**
  * Email Templates - Phase 3: All 9 Email Trigger Points
@@ -101,6 +102,10 @@ export async function sendEmail({ to, template, data, subject, html, text, gener
           const res = response.value;
           if (res.ok) {
             const result = await res.json();
+            // Handle skipped emails (invalid email addresses) - don't treat as error
+            if (result.skipped) {
+              return { success: true, skipped: true, recipient: recipients[idx], result };
+            }
             return { success: true, recipient: recipients[idx], result };
           } else {
             const errorText = await res.text();
@@ -113,10 +118,14 @@ export async function sendEmail({ to, template, data, subject, html, text, gener
     );
     
     const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
+    const skipped = results.filter(r => r.skipped).length;
+    const failed = results.filter(r => !r.success && !r.skipped).length;
     
-    if (successful > 0) {
+    if (successful > 0 && skipped === 0) {
       console.log(`[Email Service] Email sent successfully: ${template} to ${successful} recipient(s)`);
+    } else if (skipped > 0) {
+      // Don't log as error - invalid emails are expected with mock auth
+      console.log(`[Email Service] Email skipped (invalid recipient): ${template} - ${skipped} recipient(s) skipped`);
     }
     if (failed > 0) {
       console.warn(`[Email Service] Failed to send ${template} to ${failed} recipient(s)`);
@@ -189,6 +198,31 @@ You will receive email notifications for each action as they progress.
       downPayment,
       intentId,
     },
+  });
+}
+
+/**
+ * Notify user when an agent has accepted their request (Agent Panel flow).
+ */
+export async function sendAgentAcceptedEmail({ userEmail, requestId, intentId, agentName }) {
+  if (!userEmail) return { success: false, error: "userEmail required" };
+  const subject = "✅ Your agent has accepted your request";
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #2563eb;">Request accepted</h2>
+      <p><strong>${agentName || "Your agent"}</strong> has accepted your request. The request is now <strong>In Progress</strong>.</p>
+      <p style="margin-top: 16px; color: #6b7280;">Request ID: <code>${requestId || "—"}</code><br/>Intent ID: <code>${intentId || "—"}</code></p>
+      <p style="margin-top: 20px;">You can track progress in your dashboard.</p>
+    </div>
+  `;
+  const text = `Your agent (${agentName || "Agent"}) has accepted your request. Request ID: ${requestId}. Intent ID: ${intentId}. Status: In Progress.`;
+  return sendEmail({
+    to: userEmail,
+    template: "AGENT_ACCEPTED",
+    subject,
+    html,
+    text,
+    data: { requestId, intentId, agentName },
   });
 }
 
@@ -302,18 +336,35 @@ export function sortDecisionsByOrder(decisions) {
   });
 }
 
+// Backend/Ollama returns AGENT_SELECTION, FINANCING_OPTION, PROPERTY_SELECTION, DOWN_PAYMENT; UI also uses SELECT_* names
+const CONFIRMED_STATES = ["CONFIRMED", "SELECTED"];
+const PROPERTY_TYPES = ["SELECT_PROPERTY", "PROPERTY_SELECTION", "PROPERTY"];
+const AGENT_TYPES = ["SELECT_AGENT", "AGENT_SELECTION", "AGENT"];
+const LENDER_TYPES = ["SELECT_LENDER", "FINANCING_OPTION", "LENDER", "BANK"];
+const DOWN_PAYMENT_TYPES = ["DOWN_PAYMENT_STRATEGY", "DOWN_PAYMENT", "DOWNPAYMENT"];
+const REQUIRED_TYPE_GROUPS = [PROPERTY_TYPES, AGENT_TYPES, LENDER_TYPES, DOWN_PAYMENT_TYPES];
+
+function decisionTypeMatches(d, typeGroup) {
+  const t = (d.type || "").toUpperCase().replace(/-/g, "_");
+  return typeGroup.some((allowed) => {
+    const a = String(allowed).toUpperCase().replace(/-/g, "_");
+    return t === a || t.includes(a) || a.includes(t);
+  });
+}
+
 /**
- * Check if all 4 critical decisions are confirmed
- * Property → Agent → Bank → Down Payment (correct order)
+ * Check if all 4 critical decisions are confirmed (Property, Agent, Bank, Down Payment)
+ * Treats CONFIRMED and SELECTED as confirmed; matches backend type names (AGENT_SELECTION, etc.)
  */
 export function areAllDecisionsConfirmed(decisions) {
-  const requiredTypes = ["SELECT_PROPERTY", "SELECT_AGENT", "SELECT_LENDER", "DOWN_PAYMENT_STRATEGY"];
-  
-  const confirmedDecisions = decisions.filter(
-    (d) => d.evolutionState === "CONFIRMED" && requiredTypes.includes(d.type)
+  if (!decisions?.length) return false;
+  const confirmed = decisions.filter(
+    (d) => CONFIRMED_STATES.includes(d.evolutionState) && REQUIRED_TYPE_GROUPS.some((group) => decisionTypeMatches(d, group))
   );
-
-  return confirmedDecisions.length === requiredTypes.length;
+  const covered = REQUIRED_TYPE_GROUPS.every((group) =>
+    confirmed.some((d) => decisionTypeMatches(d, group))
+  );
+  return covered;
 }
 
 /**
@@ -328,25 +379,18 @@ export function extractDecisionValues(decisions) {
   };
 
   decisions.forEach((decision) => {
-    if (decision.evolutionState === "CONFIRMED" && decision.selectedOptionId) {
-      const selectedOption = decision.options?.find((opt) => opt.id === decision.selectedOptionId);
-      const label = selectedOption?.label || selectedOption?.id || decision.selectedOptionId;
+    if (!CONFIRMED_STATES.includes(decision.evolutionState)) return;
+    const optId = decision.selectedOptionId || decision.options?.[0]?.id;
+    if (!optId) return;
+    const selectedOption = decision.options?.find((opt) => opt.id === optId);
+    const label = selectedOption?.label || selectedOption?.id || optId;
+    const t = (decision.type || "").toUpperCase().replace(/-/g, "_");
+    const matches = (arr) => arr.some((k) => t.includes(String(k).toUpperCase().replace(/-/g, "_")) || t === String(k).toUpperCase().replace(/-/g, "_"));
 
-      switch (decision.type) {
-        case "SELECT_PROPERTY":
-          values.property = label;
-          break;
-        case "SELECT_AGENT":
-          values.agent = label;
-          break;
-        case "SELECT_LENDER":
-          values.lender = label;
-          break;
-        case "DOWN_PAYMENT_STRATEGY":
-          values.downPayment = label;
-          break;
-      }
-    }
+    if (matches(PROPERTY_TYPES)) values.property = label;
+    else if (matches(AGENT_TYPES)) values.agent = label;
+    else if (matches(LENDER_TYPES)) values.lender = label;
+    else if (matches(DOWN_PAYMENT_TYPES)) values.downPayment = label;
   });
 
   return values;

@@ -243,10 +243,29 @@ ${contextSection}`;
       // Step 1: Retrieve relevant documents from knowledge base
       const relevantDocs = await this.retrieveRelevantDocuments(query);
       
-      // Step 2: Check Ollama health
-      const isHealthy = await this.ollamaClient.healthCheck();
+      // Step 2: Check Ollama health (skip in production)
+      const isHealthy = await this.ollamaClient.healthCheck().catch(() => false);
       if (!isHealthy) {
-        throw new Error("Ollama service is not available");
+        // Return graceful fallback instead of throwing
+        return {
+          summary: "RAG query failed: Ollama service is not available. Please proceed with engine-only analysis.",
+          market_context: {
+            location_insights: "",
+            price_trends: "",
+            market_conditions: "",
+          },
+          risk_signals: [],
+          valuation_hint: {
+            factors: [],
+            methodology: "Engine-only (RAG unavailable)",
+            confidence: 0.0,
+          },
+          sources: [],
+          country: this.country,
+          confidence: 0.0,
+          retrieval_timestamp: new Date().toISOString(),
+          model_version: "fallback",
+        };
       }
 
       // Step 3: Build prompts with retrieved context
@@ -266,7 +285,11 @@ ${contextSection}`;
     } catch (error: any) {
       // Return error response instead of throwing
       // This allows engines to continue even if RAG fails
-      console.error(`[RAG Adapter ${this.name}] Query failed:`, error);
+      // Suppress error logs in production (Ollama is expected to be unavailable)
+      const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+      if (!isProduction) {
+        console.warn(`[RAG Adapter ${this.name}] Query failed:`, error.message);
+      }
       
       // Return error response with confidence 0.0 (will be flagged as advisory)
       return {

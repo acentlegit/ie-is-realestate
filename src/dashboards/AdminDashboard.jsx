@@ -1,4 +1,3 @@
-import DashboardLayout from "../layout/DashboardLayout";
 import { useState } from "react";
 
 /**
@@ -45,8 +44,7 @@ export default function AdminDashboard() {
   });
 
   return (
-    <DashboardLayout>
-      <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
         {/* 1️⃣ System Health */}
         <div
           style={{
@@ -283,6 +281,5 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
-    </DashboardLayout>
   );
 }

@@ -1,29 +1,29 @@
-/* Universal Intent Platform - World-Class Light Mode */
+/* Private Banking theme – safe, premium (aligned with living-space.css) */
 
 :root {
-  /* Backgrounds (Premium, Softer - Less White) */
-  --bg-app: #F6F7F9;           /* Main app background */
-  --bg-surface: #FAFBFC;       /* Cards (softer white) */
-  --bg-subtle: #F1F3F5;        /* Nested sections */
+  /* Backgrounds */
+  --bg-app: #F4FCFD;           /* Near white - main app background */
+  --bg-surface: #FFFFFF;        /* Cards / surface */
+  --bg-subtle: #BECDD9;         /* Soft blue-gray */
   
   /* Borders & Dividers */
-  --border-soft: #D1D5DB;
-  --border-muted: #9CA3AF;
-  --border-strong: #6B7280;
+  --border-soft: #DDE1E3;
+  --border-muted: #51697A;
+  --border-strong: #003152;
   
   /* Text */
-  --text-main: #111827;         /* Main text */
-  --text-sub: #4B5563;          /* Secondary text */
-  --text-muted: #6B7280;        /* Muted text */
+  --text-main: #003152;         /* Primary navy */
+  --text-sub: #51697A;          /* Secondary / muted steel blue */
+  --text-muted: #51697A;
   
-  /* Accent (BLACK & WHITE FIRST) */
-  --accent: #111827;            /* Black - primary action */
-  --accent-soft: #F1F3F5;       /* Muted background */
+  /* Accent */
+  --accent: #C8A24A;            /* Gold - premium accent */
+  --accent-soft: #F4FCFD;
   
   /* Status Colors */
-  --success: #16A34A;           /* Green - result */
-  --danger: #DC2626;            /* Red - deny */
-  --warning: #D97706;           /* Amber - warning */
+  --success: #0d7d4a;
+  --danger: #c53030;
+  --warning: #b8860b;
   
   /* Typography */
   --font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Display', 'Segoe UI', sans-serif;
@@ -44,7 +44,7 @@ body {
   margin: 0;
   padding: 0;
   background: var(--bg-app);
-  color: var(--text-primary);
+  color: var(--text-main);
   font-family: var(--font-family);
   font-size: var(--font-size-base);
   -webkit-font-smoothing: antialiased;
@@ -91,12 +91,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #9CA3AF;
+  background: var(--border-muted);
 }
 
 /* Focus outlines */
 *:focus {
-  outline: 2px solid var(--accent-primary);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -104,7 +104,7 @@ body {
 input, textarea, select {
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
-  color: var(--text-primary);
+  color: var(--text-main);
   font-family: var(--font-family);
   font-size: var(--font-size-base);
 }
@@ -112,7 +112,7 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus {
   border-color: var(--border-strong);
   outline: none;
-  box-shadow: 0 0 0 3px var(--bg-muted);
+  box-shadow: 0 0 0 3px rgba(0,49,82,.08);
 }
 
 /* Button Styling */

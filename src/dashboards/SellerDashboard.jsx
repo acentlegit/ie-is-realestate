@@ -1,4 +1,3 @@
-import DashboardLayout from "../layout/DashboardLayout";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 
@@ -67,8 +66,7 @@ export default function SellerDashboard() {
   ]);
 
   return (
-    <DashboardLayout>
-      <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
         {/* 1️⃣ Property Overview */}
         <div
           style={{
@@ -323,7 +321,6 @@ export default function SellerDashboard() {
             </div>
           </div>
         </details>
-      </div>
-    </DashboardLayout>
+    </div>
   );
 }

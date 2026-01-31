@@ -65,7 +65,7 @@ export function IntentUnderstandingSection({ result, lifecycleState }) {
               style={{
                 flex: 1,
                 height: 6,
-                backgroundColor: "rgba(255,255,255,0.1)",
+                backgroundColor: "var(--bar-track)",
                 borderRadius: 3,
                 overflow: "hidden",
               }}
@@ -74,7 +74,7 @@ export function IntentUnderstandingSection({ result, lifecycleState }) {
                 style={{
                   width: `${result.confidence * 100}%`,
                   height: "100%",
-                  background: "linear-gradient(135deg, var(--good), var(--cool))",
+                  background: "var(--cool)",
                   borderRadius: 3,
                 }}
               />
@@ -187,12 +187,12 @@ export function DecisionsSection({ decisions, onDecisionSelect, loading, onDecis
                   style={{
                     background:
                       isConfirmed
-                        ? "rgba(34,197,94,0.2)"
+                        ? "var(--good-soft)"
                         : isChanged
-                        ? "rgba(217,119,6,0.2)"
+                        ? "var(--warn-soft)"
                         : isSelected
-                        ? "rgba(59,130,246,0.2)"
-                        : "rgba(255,255,255,0.06)",
+                        ? "var(--cool-soft)"
+                        : "var(--neutral-soft)",
                     color: isConfirmed ? "var(--good)" : isChanged ? "var(--warn)" : isSelected ? "var(--cool)" : "var(--muted)",
                   }}
                 >
@@ -200,7 +200,7 @@ export function DecisionsSection({ decisions, onDecisionSelect, loading, onDecis
                 </span>
               </div>
               {decision.recommendation && (
-                <div style={{ padding: 10, background: "rgba(217,119,6,0.1)", borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+                <div style={{ padding: 10, background: "var(--warn-soft)", borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
                   <span style={{ color: "var(--warn)", marginRight: 6 }}>⭐</span>
                   <strong style={{ color: "var(--warn)" }}>Recommended:</strong> {decision.recommendation}
                 </div>
@@ -209,7 +209,7 @@ export function DecisionsSection({ decisions, onDecisionSelect, loading, onDecis
                 <div
                   style={{
                     padding: 10,
-                    background: isConfirmed ? "rgba(34,197,94,0.1)" : "rgba(217,119,6,0.1)",
+                    background: isConfirmed ? "var(--good-soft)" : "var(--warn-soft)",
                     border: `1px solid ${isConfirmed ? "var(--good)" : "var(--warn)"}`,
                     borderRadius: 8,
                     marginBottom: 12,
@@ -242,7 +242,7 @@ export function DecisionsSection({ decisions, onDecisionSelect, loading, onDecis
                       className="living-space-btn"
                       style={{
                         textAlign: "left",
-                        background: isSelectedOption ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.06)",
+                        background: isSelectedOption ? "var(--cool-soft)" : "var(--neutral-soft)",
                         borderColor: isSelectedOption ? "var(--cool)" : option.recommended ? "var(--warn)" : "var(--stroke)",
                         color: isSelectedOption ? "var(--text)" : "var(--muted)",
                       }}
@@ -306,12 +306,12 @@ export function ActionsSection({ actions, onActionOutcome, loading }) {
                   style={{
                     background:
                       isCompleted
-                        ? "rgba(34,197,94,0.2)"
+                        ? "var(--good-soft)"
                         : isFailed || isBlocked
-                        ? "rgba(239,68,68,0.2)"
+                        ? "var(--bad-soft)"
                         : isRescheduled
-                        ? "rgba(217,119,6,0.2)"
-                        : "rgba(255,255,255,0.06)",
+                        ? "var(--warn-soft)"
+                        : "var(--neutral-soft)",
                     color:
                       isCompleted
                         ? "var(--good)"
@@ -326,7 +326,7 @@ export function ActionsSection({ actions, onActionOutcome, loading }) {
                 </span>
               </div>
               {action.guidance && (
-                <div style={{ padding: 8, background: "rgba(59,130,246,0.1)", borderRadius: 6, marginBottom: 12, fontSize: 12 }}>
+                <div style={{ padding: 8, background: "var(--cool-soft)", borderRadius: 6, marginBottom: 12, fontSize: 12 }}>
                   💡 {action.guidance}
                 </div>
               )}
@@ -340,31 +340,38 @@ export function ActionsSection({ actions, onActionOutcome, loading }) {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     className="living-space-btn primary"
-                    onClick={() => onActionOutcome(action.actionId, "COMPLETED", "Action completed")}
+                    onClick={() => onActionOutcome(action, "COMPLETED")}
                     disabled={loading}
                   >
                     Complete
                   </button>
                   <button
                     className="living-space-btn"
-                    onClick={() => onActionOutcome(action.actionId, "FAILED", "Action failed")}
+                    onClick={() => onActionOutcome(action, "FAILED")}
                     disabled={loading}
                   >
                     Fail
                   </button>
                   <button
                     className="living-space-btn"
-                    onClick={() => onActionOutcome(action.actionId, "RESCHEDULED", "Action rescheduled")}
+                    onClick={() => onActionOutcome(action, "RESCHEDULED")}
                     disabled={loading}
                   >
                     Reschedule
                   </button>
                   <button
                     className="living-space-btn"
-                    onClick={() => onActionOutcome(action.actionId, "SKIPPED", "Action skipped")}
+                    onClick={() => onActionOutcome(action, "SKIPPED")}
                     disabled={loading}
                   >
                     Skip
+                  </button>
+                  <button
+                    className="living-space-btn"
+                    onClick={() => onActionOutcome(action, "BLOCKED")}
+                    disabled={loading}
+                  >
+                    Block
                   </button>
                 </div>
               )}

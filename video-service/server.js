@@ -12,7 +12,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.VIDEO_SERVICE_PORT || 3002; // Changed to 3002 to avoid conflict with frontend/Vite
+// Must match Vite proxy target: /api/video -> http://localhost:3001
+const PORT = process.env.VIDEO_SERVICE_PORT || 3001;
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || "demo_key";
 const LIVEKIT_SECRET = process.env.LIVEKIT_SECRET || "demo_secret";
 const LIVEKIT_URL = process.env.LIVEKIT_URL || "wss://demo.livekit.cloud";

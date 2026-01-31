@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./routes/App";
 import { initKeycloak } from "./auth/keycloakAuth";
-// Living Space UI - Dark theme (imported last to override light-mode)
+// Living Space UI - Private Banking theme (light, premium)
 import "./styles/living-space.css";
 
 console.log("Starting Keycloak initialization...");

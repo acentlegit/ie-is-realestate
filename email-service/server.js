@@ -207,6 +207,16 @@ async function generateIntentReportDOCX(intentData) {
 }
 
 /**
+ * Validate email address format
+ */
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  // Basic email regex - must contain @ and valid domain
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email) && email.length > 5 && email.length < 255;
+}
+
+/**
  * Email sending endpoint
  */
 app.post("/v1/send", async (req, res) => {
@@ -215,6 +225,22 @@ app.post("/v1/send", async (req, res) => {
 
     if (!to) {
       return res.status(400).json({ error: "Missing 'to' email address" });
+    }
+
+    // Validate email addresses (handle both string and array)
+    const recipients = Array.isArray(to) ? to : [to];
+    const invalidEmails = recipients.filter(email => !isValidEmail(email));
+    
+    if (invalidEmails.length > 0) {
+      console.warn(`⚠️ Skipping email send - invalid email addresses: ${invalidEmails.join(", ")}`);
+      // Return success but log warning (non-blocking for mock auth)
+      return res.json({
+        success: false,
+        skipped: true,
+        reason: "Invalid email address",
+        invalidEmails,
+        message: `Email skipped: invalid recipient(s) - ${invalidEmails.join(", ")}`
+      });
     }
 
     const msg = {

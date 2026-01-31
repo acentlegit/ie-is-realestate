@@ -8,7 +8,7 @@ import { getRole } from "../auth/keycloakAuth";
  * 
  * Role Navigation:
  * - Buyer: Intent, My History, My Evidence
- * - Seller: Intent, My Properties, History, Evidence
+ * - Seller / Property Owner: Intent, My Properties, History, Evidence
  * - Agent: Assigned Intents, Actions, History, Evidence
  * - Admin: All Intents, Compliance, Policies, Evidence, System
  */
@@ -20,6 +20,7 @@ export default function Sidebar() {
   const isActive = (path) => location.pathname === path;
   const isBuyer = role === "buyer";
   const isSeller = role === "seller";
+  const isPropertyOwner = role === "property_owner";
   const isAgent = role === "agent";
   const isAdmin = role === "admin" || role === "superuser";
 
@@ -70,7 +71,14 @@ export default function Sidebar() {
       {/* Navigation Menu */}
       <nav style={{ flex: 1, padding: "16px 0" }}>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {/* Intent - Default landing (ALL ROLES) */}
+          {/* Dashboard - First after login (ALL ROLES) */}
+          <li
+            style={navItemStyle(isActive("/dashboard"))}
+            onClick={() => navigate("/dashboard")}
+          >
+            📊 Dashboard
+          </li>
+          {/* Intent - From menu (ALL ROLES) */}
           <li
             style={navItemStyle(isActive("/intent"))}
             onClick={() => navigate("/intent")}
@@ -102,8 +110,8 @@ export default function Sidebar() {
             </>
           )}
 
-          {/* Seller Navigation */}
-          {isSeller && (
+          {/* Seller / Property Owner Navigation */}
+          {(isSeller || isPropertyOwner) && (
             <>
               <li
                 style={{
